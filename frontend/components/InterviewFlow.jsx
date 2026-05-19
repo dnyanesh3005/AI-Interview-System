@@ -1,44 +1,192 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import './InterviewFlow.css';
 
-function InterviewFlow({ sessionId, resumeData, role, onComplete }) {
-    const [currentQuestion, setCurrentQuestion] = useState(null);
+function InterviewFlow({ sessionId, resumeData, role, initialQuestion, onComplete }) {
+    const [currentQuestion, setCurrentQuestion] = useState(initialQuestion || null);
     const [questionNumber, setQuestionNumber] = useState(1);
-    const [totalQuestions] = useState(5);
+    const [totalQuestions, setTotalQuestions] = useState(5);
     const [answer, setAnswer] = useState('');
     const [isAnswering, setIsAnswering] = useState(false);
-    const [loading, setLoading] = useState(true);
+    const [isSkipping, setIsSkipping] = useState(false);
+    const [loading, setLoading] = useState(!initialQuestion);
     const [error, setError] = useState(null);
     const [answeredQuestions, setAnsweredQuestions] = useState([]);
     const [answerStartTime, setAnswerStartTime] = useState(null);
+    const [recordingDuration, setRecordingDuration] = useState(0);
 
-    const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:8000/api';
+    // Video/Audio Recording States
+    const [isRecording, setIsRecording] = useState(false);
+    const [mediaStream, setMediaStream] = useState(null);
+    const videoRef = useRef(null);
+    const recognitionRef = useRef(null);
+    const timerRef = useRef(null);
+
+    const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api';
 
     useEffect(() => {
-        // Fetch initial question
-        if (questionNumber === 1) {
-            fetchCurrentQuestion();
+        // If we received an initialQuestion from parent, use it directly
+        if (initialQuestion) {
+            setCurrentQuestion(initialQuestion);
+            setLoading(false);
         }
+    }, [initialQuestion]);
+
+    useEffect(() => {
+        const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+        if (SpeechRecognition) {
+            const recognition = new SpeechRecognition();
+            recognition.continuous = true;
+            recognition.interimResults = true;
+            
+            recognition.onresult = (event) => {
+                let finalTranscript = '';
+                for (let i = event.resultIndex; i < event.results.length; ++i) {
+                    if (event.results[i].isFinal) {
+                        finalTranscript += event.results[i][0].transcript + ' ';
+                    }
+                }
+                if (finalTranscript) {
+                    setAnswer((prev) => prev + finalTranscript);
+                }
+            };
+            
+            recognition.onerror = (event) => {
+                console.error("Speech recognition error", event.error);
+            };
+            
+            recognitionRef.current = recognition;
+        }
+
+        return () => {
+            if (recognitionRef.current) {
+                recognitionRef.current.stop();
+            }
+        };
     }, []);
 
-    const fetchCurrentQuestion = async () => {
-        setLoading(true);
+    // Cleanup media tracks when component unmounts
+    useEffect(() => {
+        return () => {
+            if (mediaStream) {
+                mediaStream.getTracks().forEach(track => track.stop());
+            }
+            if (timerRef.current) clearInterval(timerRef.current);
+        };
+    }, [mediaStream]);
+
+    useEffect(() => {
+        if (videoRef.current && mediaStream) {
+            videoRef.current.srcObject = mediaStream;
+        }
+    }, [mediaStream, isRecording]);
+
+    const toggleRecording = async () => {
+        if (isRecording) {
+            // Stop recording
+            setIsRecording(false);
+            if (recognitionRef.current) {
+                recognitionRef.current.stop();
+            }
+            if (mediaStream) {
+                mediaStream.getTracks().forEach(track => track.stop());
+                setMediaStream(null);
+            }
+            if (timerRef.current) {
+                clearInterval(timerRef.current);
+                timerRef.current = null;
+            }
+        } else {
+            // Start recording
+            try {
+                if (!answerStartTime) {
+                    setAnswerStartTime(Date.now());
+                }
+                setRecordingDuration(0);
+                timerRef.current = setInterval(() => {
+                    setRecordingDuration(prev => prev + 1);
+                }, 1000);
+                const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+                setMediaStream(stream);
+                setIsRecording(true);
+
+                if (recognitionRef.current) {
+                    recognitionRef.current.start();
+                }
+            } catch (err) {
+                setError("Could not access camera/microphone. Please allow permissions.");
+                console.error("Media access error:", err);
+            }
+        }
+    };
+
+    const handleSkipQuestion = async () => {
+        if (!currentQuestion) return;
+        setIsSkipping(true);
         setError(null);
 
+        // Stop any active recording first
+        if (isRecording) {
+            setIsRecording(false);
+            if (recognitionRef.current) recognitionRef.current.stop();
+            if (mediaStream) {
+                mediaStream.getTracks().forEach(track => track.stop());
+                setMediaStream(null);
+            }
+            if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
+        }
+
         try {
-            // In a real implementation, this would be a separate endpoint
-            // For now, we've already got the first question from start-interview
-            // This is a placeholder for fetching subsequent questions
-            setLoading(false);
+            const response = await fetch(`${API_BASE_URL}/skip-question`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    session_id: sessionId,
+                    question_id: currentQuestion.question_id,
+                }),
+            });
+
+            if (!response.ok) {
+                const errData = await response.json();
+                throw new Error(errData.detail || 'Failed to skip question');
+            }
+
+            const data = await response.json();
+
+            setAnsweredQuestions(prev => [
+                ...prev,
+                {
+                    question: currentQuestion.question_text,
+                    answer: null,
+                    questionNumber,
+                    skipped: true,
+                }
+            ]);
+
+            if (data.interview_complete) {
+                onComplete();
+            } else {
+                setCurrentQuestion(data.question);
+                setQuestionNumber(prev => prev + 1);
+                if (data.total_questions) setTotalQuestions(data.total_questions);
+                setAnswer('');
+                setAnswerStartTime(null);
+                setRecordingDuration(0);
+            }
         } catch (err) {
             setError(err.message);
-            setLoading(false);
+        } finally {
+            setIsSkipping(false);
         }
     };
 
     const handleAnswerSubmit = async () => {
         if (!answer.trim()) {
-            alert('Please provide an answer before submitting');
+            alert('Please record your answer before submitting. Use the Start Video Response button.');
+            return;
+        }
+
+        if (!currentQuestion) {
+            setError('No question loaded. Please refresh the page.');
             return;
         }
 
@@ -60,14 +208,15 @@ function InterviewFlow({ sessionId, resumeData, role, onComplete }) {
             });
 
             if (!response.ok) {
-                throw new Error('Failed to submit answer');
+                const errData = await response.json();
+                throw new Error(errData.detail || 'Failed to submit answer');
             }
 
             const data = await response.json();
 
             // Store answered question
-            setAnsweredQuestions([
-                ...answeredQuestions,
+            setAnsweredQuestions(prev => [
+                ...prev,
                 {
                     question: currentQuestion.question_text,
                     answer: answer,
@@ -81,7 +230,8 @@ function InterviewFlow({ sessionId, resumeData, role, onComplete }) {
             } else {
                 // Move to next question
                 setCurrentQuestion(data.question);
-                setQuestionNumber(questionNumber + 1);
+                setQuestionNumber(prev => prev + 1);
+                if (data.total_questions) setTotalQuestions(data.total_questions);
                 setAnswer('');
                 setAnswerStartTime(null);
             }
@@ -99,6 +249,12 @@ function InterviewFlow({ sessionId, resumeData, role, onComplete }) {
         setAnswer(e.target.value);
     };
 
+    const formatDuration = (secs) => {
+        const m = Math.floor(secs / 60).toString().padStart(2, '0');
+        const s = (secs % 60).toString().padStart(2, '0');
+        return `${m}:${s}`;
+    };
+
     if (loading) {
         return (
             <div className="interview-container">
@@ -107,7 +263,7 @@ function InterviewFlow({ sessionId, resumeData, role, onComplete }) {
         );
     }
 
-    if (error) {
+    if (error && !currentQuestion) {
         return (
             <div className="interview-container">
                 <div className="error-message">
@@ -123,7 +279,7 @@ function InterviewFlow({ sessionId, resumeData, role, onComplete }) {
             <div className="interview-header">
                 <div className="interview-title">
                     <h1>Technical Interview</h1>
-                    <p>Role: <strong>{role}</strong> | Candidate: <strong>{resumeData.candidate_name}</strong></p>
+                    <p>Role: <strong>{role}</strong> | Candidate: <strong>{resumeData?.candidate_name || 'Candidate'}</strong></p>
                 </div>
 
                 <div className="progress-section">
@@ -138,7 +294,7 @@ function InterviewFlow({ sessionId, resumeData, role, onComplete }) {
             </div>
 
             <div className="interview-content">
-                {currentQuestion && (
+                {currentQuestion ? (
                     <div className="question-section">
                         <div className="question-metadata">
                             <span className="question-type">{currentQuestion.question_type}</span>
@@ -148,10 +304,12 @@ function InterviewFlow({ sessionId, resumeData, role, onComplete }) {
 
                         <h2 className="question-text">{currentQuestion.question_text}</h2>
 
-                        <div className="question-hints">
-                            <p className="hint-label">Expected answer depth:</p>
-                            <p className="hint-text">{currentQuestion.expected_depth}</p>
-                        </div>
+                        {currentQuestion.expected_depth && (
+                            <div className="question-hints">
+                                <p className="hint-label">Expected answer depth:</p>
+                                <p className="hint-text">{currentQuestion.expected_depth}</p>
+                            </div>
+                        )}
 
                         {currentQuestion.context_used && currentQuestion.context_used.length > 0 && (
                             <details className="context-details">
@@ -164,37 +322,74 @@ function InterviewFlow({ sessionId, resumeData, role, onComplete }) {
                             </details>
                         )}
                     </div>
+                ) : (
+                    <div className="question-section">
+                        <p className="loading">Preparing your question...</p>
+                    </div>
                 )}
 
-                <div className="answer-section">
-                    <label htmlFor="answer">Your Answer:</label>
-                    <textarea
-                        id="answer"
-                        className="answer-input"
-                        placeholder="Type your detailed answer here. Take your time to provide a thoughtful response."
-                        value={answer}
-                        onChange={handleAnswerChange}
-                        disabled={isAnswering}
-                        rows={10}
-                    />
+                    <div className="answer-section">
+                        {error && (
+                            <div className="error-message" style={{ marginBottom: '1rem' }}>
+                                <p>⚠️ {error}</p>
+                            </div>
+                        )}
 
-                    <div className="answer-info">
-                        <span className="char-count">{answer.length} characters</span>
-                        <span className="timer">
-                            {answerStartTime && (
-                                <>Time: {Math.round((Date.now() - answerStartTime) / 1000)}s</>
+                        <label>Your Response:</label>
+                        <div className="recording-controls">
+                            <button
+                                id="toggle-recording-btn"
+                                className={`record-button ${isRecording ? 'recording' : ''}`}
+                                onClick={toggleRecording}
+                                disabled={isAnswering || isSkipping}
+                            >
+                                {isRecording ? '⏹ Stop Recording' : '⏺ Start Video Response'}
+                            </button>
+                            {isRecording && (
+                                <span className="recording-indicator">
+                                    🔴 Recording — {formatDuration(recordingDuration)}
+                                </span>
                             )}
-                        </span>
-                    </div>
+                        </div>
 
-                    <button
-                        className="submit-button"
-                        onClick={handleAnswerSubmit}
-                        disabled={isAnswering || !answer.trim()}
-                    >
-                        {isAnswering ? 'Submitting...' : 'Submit Answer'}
-                    </button>
-                </div>
+                        {isRecording && (
+                            <div className="video-preview-container">
+                                <video
+                                    ref={videoRef}
+                                    autoPlay
+                                    muted
+                                    playsInline
+                                    style={{ width: '100%', maxHeight: '300px', objectFit: 'cover', display: 'block' }}
+                                />
+                            </div>
+                        )}
+
+                        {answer && (
+                            <div className="transcript-preview">
+                                <p className="transcript-label">📝 Transcription:</p>
+                                <p className="transcript-text">{answer}</p>
+                            </div>
+                        )}
+
+                        <div className="answer-actions">
+                            <button
+                                id="skip-question-btn"
+                                className="skip-button"
+                                onClick={handleSkipQuestion}
+                                disabled={isAnswering || isSkipping || isRecording}
+                            >
+                                {isSkipping ? 'Skipping...' : '⏭ Skip Question'}
+                            </button>
+                            <button
+                                id="submit-answer-btn"
+                                className="submit-button"
+                                onClick={handleAnswerSubmit}
+                                disabled={isAnswering || isSkipping || !answer.trim() || !currentQuestion}
+                            >
+                                {isAnswering ? 'Submitting...' : 'Submit Answer'}
+                            </button>
+                        </div>
+                    </div>
             </div>
 
             {answeredQuestions.length > 0 && (
@@ -202,9 +397,12 @@ function InterviewFlow({ sessionId, resumeData, role, onComplete }) {
                     <h3>Previous Answers</h3>
                     <div className="qa-summary">
                         {answeredQuestions.map((qa, idx) => (
-                            <div key={idx} className="qa-item">
+                            <div key={idx} className={`qa-item ${qa.skipped ? 'qa-skipped' : ''}`}>
                                 <p className="qa-question"><strong>Q{idx + 1}:</strong> {qa.question}</p>
-                                <p className="qa-answer"><strong>Your Answer:</strong> {qa.answer.substring(0, 100)}...</p>
+                                {qa.skipped
+                                    ? <p className="qa-skipped-label">⏭ Skipped</p>
+                                    : <p className="qa-answer"><strong>Your Answer:</strong> {qa.answer.substring(0, 100)}...</p>
+                                }
                             </div>
                         ))}
                     </div>

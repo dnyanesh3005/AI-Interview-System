@@ -1,6 +1,6 @@
 # Complete Setup Guide - AI Candidate Screening System
 
-This guide will walk you through setting up the complete system from scratch.
+This guide walks you through setting up the complete system from scratch.
 
 ## Prerequisites
 
@@ -9,16 +9,18 @@ Before starting, ensure you have:
 - **Node.js 16+** installed ([Download](https://nodejs.org/))
 - **Git** installed ([Download](https://git-scm.com/))
 - A code editor (VS Code recommended)
-- 2GB free disk space
+- 2GB free disk space (for embedding model download)
 
 ### Verify Installations
 
 ```bash
 python --version        # Should be 3.9 or higher
-node --version         # Should be 16 or higher
-npm --version          # Should be 7 or higher
-git --version          # Should be 2.30 or higher
+node --version          # Should be 16 or higher
+npm --version           # Should be 7 or higher
+git --version           # Should be 2.30 or higher
 ```
+
+---
 
 ## Full Setup (End-to-End)
 
@@ -34,6 +36,8 @@ mkdir ai-interview-system
 cd ai-interview-system
 # Copy all files to appropriate directories
 ```
+
+---
 
 ### Step 2: Backend Setup (Python)
 
@@ -70,35 +74,28 @@ This installs:
 - sentence-transformers (embeddings)
 - scikit-learn (similarity search)
 - python-dotenv (environment config)
-- And other dependencies
 
-**First-time setup note**: First run will download the embedding model (~400MB). This is normal.
+> **First-time setup note**: First run will download the embedding model (~400MB). This is normal and only happens once.
 
 #### 2.4 Configure Environment
 
 ```bash
 # Copy example env file
 cp .env.example .env
-
-# Edit .env file
-# nano .env  (or use your editor)
 ```
 
-**Important .env values:**
+**Important `.env` values:**
 ```
 HOST=0.0.0.0
 PORT=8000
 DEBUG=True
 EMBEDDING_MODEL=all-MiniLM-L6-v2
+DATABASE_URL=sqlite:///./interview_system.db
 ```
 
-#### 2.5 Verify Backend Setup
+#### 2.5 Run Backend Server
 
 ```bash
-# Test imports
-python -c "import fastapi; import sentence_transformers; print('✓ All imports successful')"
-
-# Run server
 python main.py
 ```
 
@@ -106,25 +103,22 @@ Expected output:
 ```
 INFO:     Started server process [XXXX]
 INFO:     Waiting for application startup.
-INFO:     Application startup complete
+INFO:     Application startup complete.
 INFO:     Uvicorn running on http://0.0.0.0:8000
 ```
 
-**Keep this terminal open**, the backend will run here.
-
-#### API Documentation
-
-Once backend is running:
+**Keep this terminal open.** API docs available at:
 - **Swagger UI**: http://localhost:8000/docs
 - **ReDoc**: http://localhost:8000/redoc
 - **Health Check**: http://localhost:8000/health
 
+---
+
 ### Step 3: Frontend Setup (Node.js/React)
 
-#### 3.1 Open New Terminal, Navigate to Frontend
+#### 3.1 Open a New Terminal, Navigate to Frontend
 
 ```bash
-# In a new terminal window
 cd frontend
 ```
 
@@ -134,20 +128,18 @@ cd frontend
 npm install
 ```
 
-This installs:
-- React 18
-- React Router
-- Vite (build tool)
-- And other dependencies
-
 #### 3.3 Configure Environment
 
-```bash
-# Create .env.local file
-echo "REACT_APP_API_URL=http://localhost:8000/api" > .env.local
+> ⚠️ **Important**: This project uses **Vite**, not Create React App.
+> Environment variables **must** use the `VITE_` prefix and are accessed via `import.meta.env`.
 
-# Verify file was created
+```bash
+# Create .env.local file with correct Vite prefix
+echo "VITE_API_URL=http://localhost:8000/api" > .env.local
+
+# Verify
 cat .env.local
+# Should output: VITE_API_URL=http://localhost:8000/api
 ```
 
 #### 3.4 Start Development Server
@@ -170,127 +162,128 @@ Open your browser and visit: **http://localhost:5173**
 
 You should see the resume upload interface.
 
+---
+
 ### Step 4: Test the System
 
 #### 4.1 Test Resume Upload
 
 1. Go to http://localhost:5173
-2. Click upload area or drag & drop
-3. Select a resume file (create a test one if needed)
-4. Click "Upload Resume"
+2. Click the upload area or drag & drop a resume file
+3. Supported formats: `.pdf`, `.txt`, `.docx`
+4. Click **"Upload Resume"**
 
-Expected result: Resume data extracted successfully
+✅ Expected: Resume data extracted and displayed, moves to role selection screen.
 
-#### 4.2 Test Role Selection
+#### 4.2 Test Role Selection *(Fixed)*
 
-1. After upload, see the role selection page
-2. Click any role card
-3. Click "Start Interview"
+1. After upload, you see the **role selection page**
+2. **Click** any role card to select it (card highlights with ✓)
+3. Click **"Start Interview"** button to proceed
 
-Expected result: Interview starts with first question
+✅ Expected: Interview begins with the first question displayed immediately.
+
+> **Note**: Clicking a role card now only highlights it (local state). The API call only fires when you click "Start Interview" — preventing the previous double-call race condition.
 
 #### 4.3 Test Interview Flow
 
-1. Read the question
-2. Type an answer in the textarea
-3. Click "Submit Answer"
-4. See the next question
+1. Read the displayed question
+2. Type your answer in the textarea
+3. Click **"Submit Answer"**
+4. Next question appears automatically
 
-This repeats 5 times, then shows the summary.
+This repeats 5 times, then the summary screen is shown.
 
-## Troubleshooting Setup
+#### 4.4 Test Summary & Sessions
+
+1. After 5 answers, the **Interview Summary** displays
+2. Review Q&A pairs and performance analysis
+3. Navigate to **/sessions** to see all past sessions
+
+---
+
+## Troubleshooting
 
 ### Backend Issues
-
-#### Error: "Python not found"
-```bash
-# Use python3 instead
-python3 -m venv venv
-python3 main.py
-```
 
 #### Error: "ModuleNotFoundError: No module named 'fastapi'"
 ```bash
 # Ensure venv is activated
-source venv/bin/activate  # macOS/Linux
-# or
 venv\Scripts\activate     # Windows
+source venv/bin/activate  # macOS/Linux
 
 # Reinstall requirements
 pip install -r requirements.txt
 ```
 
-#### Error: "Address already in use"
+#### Error: "Address already in use" (port 8000)
 ```bash
-# Port 8000 is already in use, either:
-# Option 1: Kill the process using port 8000
+# Option 1: Kill the process
+# Windows: netstat -ano | findstr :8000
 # Option 2: Change PORT in .env
 PORT=8001
-# Then run: python main.py
+python main.py
 ```
 
 #### Error: "SSL certificate verify failed"
 ```bash
-# For embeddings download issues
 pip install --upgrade certifi
 ```
 
-### Frontend Issues
-
-#### Error: "npm: command not found"
+#### Error: Database locked
 ```bash
-# Node.js not installed
-# Download from https://nodejs.org/
-# Then restart terminal and try again
+# Delete and recreate
+del backend\interview_system.db    # Windows
+rm backend/interview_system.db     # macOS/Linux
+python main.py
 ```
 
-#### Error: "Port 5173 already in use"
+---
+
+### Frontend Issues
+
+#### Error: "Cannot find module" or blank page
 ```bash
-# Use different port
-npm run dev -- --port 3000
+# Reinstall node modules
+rm -rf node_modules
+npm install
+npm run dev
+```
+
+#### Env var `VITE_API_URL` not working
+```bash
+# Wrong (CRA syntax - does NOT work in Vite):
+# REACT_APP_API_URL=http://localhost:8000/api
+
+# Correct (Vite syntax):
+# VITE_API_URL=http://localhost:8000/api
+
+# Check your .env.local file:
+cat frontend/.env.local
+# Must show: VITE_API_URL=http://localhost:8000/api
+
+# Restart the dev server after editing .env.local
+npm run dev
 ```
 
 #### Error: "Cannot GET /api/..."
 ```bash
-# Backend not running
-# Ensure backend server is running on http://localhost:8000
-# Check REACT_APP_API_URL in .env.local
+# Backend not running — start it:
+cd backend && python main.py
+# Then verify:
+curl http://localhost:8000/health
 ```
 
-### Database Issues
-
-#### Error: "database is locked"
+#### Port 5173 already in use
 ```bash
-# Close other connections
-# Delete interview_system.db and restart
-rm interview_system.db
-python main.py
+npm run dev -- --port 3000
 ```
 
-#### Reset Database
-```bash
-# Backend directory
-rm interview_system.db
-# Backend will recreate it on next run
-```
-
-## Project Structure Verification
-
-After setup, verify your structure:
-
-```bash
-# From root directory
-tree -I 'node_modules|venv|*.db' -L 3
-
-# Or manually check:
-ls -la backend/
-ls -la frontend/
-ls -la backend/modules/
-```
+---
 
 ## Configuration Details
 
-### Backend .env Options
+### Backend `.env` Options
 
 ```
 # Server
@@ -308,229 +301,107 @@ CHUNK_OVERLAP=100      # Overlap between chunks
 RETRIEVAL_TOP_K=5      # Top results to retrieve
 ```
 
-### Frontend .env Options
+### Frontend `.env.local` Options
 
 ```
-REACT_APP_API_URL=http://localhost:8000/api
+VITE_API_URL=http://localhost:8000/api
 ```
 
-## Production Deployment
+> ⚠️ **Never** use `REACT_APP_*` prefix in this project — it's a Vite project, not Create React App.
 
-### Backend (Python)
+---
 
-#### Option 1: Heroku
+## Bug Fixes Applied
 
-```bash
-# Install Heroku CLI
-# Login and create app
-heroku create your-app-name
+The following bugs were identified and fixed in the codebase:
 
-# Deploy
-git push heroku main
-```
+| # | File | Bug | Fix |
+|---|------|-----|-----|
+| 1 | `RoleSelection.jsx` | Clicking a role card immediately triggered the full API flow; the "Start Interview" button triggered it a second time (race condition) | Card click only updates local state; `onSelect()` is called once from the button |
+| 2 | `App.jsx` + `InterviewFlow.jsx` | First question returned by `/api/start-interview` was discarded; `InterviewFlow` had `currentQuestion = null` with no fetch logic | App stores `data.question` and passes it as `initialQuestion` prop to `InterviewFlow` |
+| 3 | All components | `process.env.REACT_APP_API_URL` doesn't work in Vite (CRA syntax) | Changed to `import.meta.env.VITE_API_URL` in all components + `.env.local` |
 
-#### Option 2: Docker
-
-```bash
-# Create Dockerfile in backend/
-# Build image
-docker build -t ai-interview-backend .
-
-# Run container
-docker run -p 8000:8000 ai-interview-backend
-```
-
-#### Option 3: Cloud Platforms
-
-- **Railway**: Push to Git, auto-deploys
-- **Render**: Push to Git, auto-deploys
-- **PythonAnywhere**: Upload files, configure
-- **Replit**: Import repo, click Run
-
-### Frontend (React)
-
-#### Option 1: Vercel
-
-```bash
-# Install Vercel CLI
-npm i -g vercel
-
-# Deploy
-cd frontend
-vercel
-```
-
-#### Option 2: Netlify
-
-```bash
-# Install Netlify CLI
-npm i -g netlify-cli
-
-# Build and deploy
-cd frontend
-npm run build
-netlify deploy --prod --dir=dist
-```
-
-#### Option 3: GitHub Pages
-
-```bash
-# Update package.json
-"homepage": "https://yourusername.github.io/repo-name"
-
-# Build
-npm run build
-
-# Deploy (requires gh-pages package)
-npm run deploy
-```
+---
 
 ## Development Workflow
 
-### During Development
+### Running Both Servers
 
-1. **Terminal 1 - Backend**
-   ```bash
-   cd backend
-   source venv/bin/activate  # or activate.bat on Windows
-   python main.py
-   ```
+**Terminal 1 — Backend:**
+```bash
+cd backend
+venv\Scripts\activate   # Windows
+python main.py
+```
 
-2. **Terminal 2 - Frontend**
-   ```bash
-   cd frontend
-   npm run dev
-   ```
+**Terminal 2 — Frontend:**
+```bash
+cd frontend
+npm run dev
+```
 
-3. Open http://localhost:5173 in browser
+Open http://localhost:5173 in your browser.
 
 ### Making Changes
 
-- **Backend changes**: Auto-reload with `--reload` flag
-  ```bash
-  python main.py  # With reload enabled
-  ```
+- **Backend changes**: Auto-reloads via uvicorn `--reload` (already enabled in `main.py`)
+- **Frontend changes**: Auto-reloads via Vite HMR on every save
 
-- **Frontend changes**: Auto-reload with hot module replacement (HMR)
-  ```bash
-  npm run dev  # Auto-refreshes on save
-  ```
+---
 
-## Testing the System
+## Production Deployment
 
-### Manual Test Cases
+### Backend
 
-#### Test 1: Complete Interview Flow
-```
-1. Upload a resume (PDF/TXT/DOCX)
-2. Select a role
-3. Answer all 5 questions
-4. Verify summary displays
-5. Download summary
+```bash
+# Using Gunicorn + Uvicorn workers
+gunicorn main:app --workers 4 -k uvicorn.workers.UvicornWorker --timeout 60
+
+# Using Docker
+docker build -t ai-interview-backend .
+docker run -p 8000:8000 ai-interview-backend
 ```
 
-#### Test 2: Multiple Sessions
-```
-1. Complete first interview
-2. Start new interview
-3. Upload different resume
-4. Complete second interview
-5. Verify both in sessions list
-```
+### Frontend
 
-#### Test 3: Database Persistence
-```
-1. Complete an interview
-2. Stop backend server
-3. Restart backend server
-4. Verify session still exists in list
+```bash
+# Build
+npm run build
+
+# Deploy to Vercel
+vercel
+
+# Deploy to Netlify
+netlify deploy --prod --dir=dist
 ```
 
-#### Test 4: Resume Parsing
-```
-1. Try uploading different file types (.pdf, .txt)
-2. Verify all are parsed correctly
-3. Check extracted fields (skills, experience, etc.)
-```
-
-## Next Steps
-
-### After Successful Setup
-
-1. **Test with Sample Data**
-   - Create a test resume
-   - Go through complete interview flow
-   - Verify all features work
-
-2. **Customize Questions**
-   - Edit knowledge bases in `rag_pipeline.py`
-   - Add your own domain knowledge
-   - Test question generation
-
-3. **Deploy to Production**
-   - Choose hosting platform
-   - Set up environment variables
-   - Deploy both backend and frontend
-   - Configure custom domain (optional)
-
-4. **Monitor and Maintain**
-   - Check server logs regularly
-   - Back up database periodically
-   - Update dependencies monthly
-   - Monitor API performance
-
-## Additional Resources
-
-### Official Documentation
-- [FastAPI Docs](https://fastapi.tiangolo.com/)
-- [React Docs](https://react.dev/)
-- [Node.js Docs](https://nodejs.org/docs/)
-- [SQLite Docs](https://www.sqlite.org/docs.html)
-
-### Tutorials & Guides
-- [FastAPI Tutorial](https://fastapi.tiangolo.com/tutorial/)
-- [React Tutorial](https://react.dev/learn)
-- [Vite Guide](https://vitejs.dev/guide/)
-
-### Community & Support
-- [Stack Overflow](https://stackoverflow.com/)
-- [GitHub Discussions](https://github.com/)
-- [Reddit r/learnprogramming](https://reddit.com/r/learnprogramming/)
-
-## Getting Help
-
-If you encounter issues:
-
-1. **Check the logs**: Look at terminal output for error messages
-2. **Read error messages**: They often indicate the solution
-3. **Check this guide**: Look for your issue in Troubleshooting
-4. **Search online**: Copy error message and search
-5. **Create an issue**: Document your setup and error
+---
 
 ## Quick Command Reference
 
 ```bash
-# Backend
+# ── Backend ──────────────────────────────────────
 cd backend
 python -m venv venv              # Create venv
-source venv/bin/activate         # Activate (macOS/Linux)
 venv\Scripts\activate            # Activate (Windows)
+source venv/bin/activate         # Activate (macOS/Linux)
 pip install -r requirements.txt  # Install deps
 python main.py                   # Run server
 
-# Frontend
+# ── Frontend ─────────────────────────────────────
 cd frontend
 npm install                      # Install deps
 npm run dev                      # Development server
 npm run build                    # Production build
 npm run preview                  # Preview build
 
-# Database
-rm backend/interview_system.db   # Reset database
+# ── Database ─────────────────────────────────────
+del backend\interview_system.db  # Reset DB (Windows)
+rm backend/interview_system.db   # Reset DB (macOS/Linux)
 
-# Testing
-curl http://localhost:8000/health        # Check backend
-curl http://localhost:5173               # Check frontend
+# ── Health Checks ─────────────────────────────────
+curl http://localhost:8000/health
+curl http://localhost:5173
 ```
 
 ---

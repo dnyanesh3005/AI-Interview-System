@@ -12,11 +12,12 @@ function App() {
     const [sessionId, setSessionId] = useState(null);
     const [resumeData, setResumeData] = useState(null);
     const [selectedRole, setSelectedRole] = useState(null);
+    const [firstQuestion, setFirstQuestion] = useState(null);
     const [currentStep, setCurrentStep] = useState('resume-upload');
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState(null);
 
-    const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:8000/api';
+    const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api';
 
     useEffect(() => {
         // Check if API is available
@@ -112,6 +113,7 @@ function App() {
             }
 
             setSessionId(data.session_id);
+            setFirstQuestion(data.question || null);
             setCurrentStep('interview');
         } catch (err) {
             setError(err.message || 'Error starting interview');
@@ -127,6 +129,7 @@ function App() {
         setSessionId(null);
         setResumeData(null);
         setSelectedRole(null);
+        setFirstQuestion(null);
         setCurrentStep('resume-upload');
         setError(null);
     };
@@ -165,6 +168,7 @@ function App() {
                                         sessionId={sessionId}
                                         resumeData={resumeData}
                                         role={selectedRole}
+                                        initialQuestion={firstQuestion}
                                         onComplete={handleInterviewComplete}
                                     />
                                 )}

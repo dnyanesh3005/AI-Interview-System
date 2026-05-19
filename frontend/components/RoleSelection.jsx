@@ -44,7 +44,12 @@ function RoleSelection({ onSelect, loading }) {
 
     const handleRoleSelect = (roleName) => {
         setSelectedRole(roleName);
-        onSelect(roleName);
+    };
+
+    const handleStartInterview = () => {
+        if (selectedRole && !loading) {
+            onSelect(selectedRole);
+        }
     };
 
     return (
@@ -87,7 +92,7 @@ function RoleSelection({ onSelect, loading }) {
                 <button
                     className="continue-button"
                     disabled={!selectedRole || loading}
-                    onClick={() => selectedRole && handleRoleSelect(selectedRole)}
+                    onClick={handleStartInterview}
                 >
                     {loading ? 'Starting Interview...' : 'Start Interview'}
                 </button>

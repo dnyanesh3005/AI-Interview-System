@@ -55,6 +55,11 @@ class AnswerSubmission(BaseModel):
     session_id: str
     question_id: str
     answer: str
+    duration_seconds: Optional[int] = 0
+
+class SkipQuestion(BaseModel):
+    session_id: str
+    question_id: str
 
 class InterviewSummaryResponse(BaseModel):
     session_id: str
@@ -255,6 +260,64 @@ async def submit_answer(answer_data: AnswerSubmission):
         raise
     except Exception as e:
         logger.error(f"Answer submission error: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/skip-question")
+async def skip_question(skip_data: SkipQuestion):
+    """
+    Skip the current question and receive the next one.
+
+    Returns: Next question or completion status
+    """
+    try:
+        # Get session data
+        session = session_manager.get_session(skip_data.session_id)
+        if not session:
+            raise HTTPException(status_code=404, detail="Session not found")
+
+        # Store a skipped placeholder answer so question_count advances
+        db.store_answer(
+            session_id=skip_data.session_id,
+            question_id=skip_data.question_id,
+            answer="[SKIPPED]"
+        )
+
+        question_count = db.get_question_count(skip_data.session_id)
+
+        # Check if interview is complete
+        if question_count >= 5:
+            db.complete_session(skip_data.session_id)
+            return {
+                "success": True,
+                "interview_complete": True,
+                "message": "Interview completed!"
+            }
+
+        # Generate next question
+        next_question = question_generator.generate_question(
+            session_id=skip_data.session_id,
+            resume_data=session["resume_data"],
+            question_number=question_count + 1,
+            previous_context={
+                "previous_question": db.get_last_question(skip_data.session_id),
+                "previous_answer": None
+            }
+        )
+
+        db.store_question(skip_data.session_id, next_question)
+        logger.info(f"Question skipped in session {skip_data.session_id}")
+
+        return {
+            "success": True,
+            "interview_complete": False,
+            "question": next_question,
+            "question_number": question_count + 1,
+            "total_questions": 5
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Skip question error: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/interview-summary/{session_id}")
