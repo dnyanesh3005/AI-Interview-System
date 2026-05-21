@@ -113,12 +113,16 @@
 .info-section {
     margin-top: 2rem;
     padding-top: 2rem;
-    border-top: 1px solid #e5e7eb;
+    border-top: 1px solid rgba(255, 255, 255, 0.1);
+    background: transparent !important;
+    box-shadow: none !important;
+    border-radius: 0 !important;
 }
 
 .info-section h3 {
     font-size: 1.1rem;
     margin-bottom: 1rem;
+    color: #ffffff !important;
 }
 
 .info-section ul {
@@ -130,7 +134,7 @@
     padding: 0.5rem 0;
     padding-left: 1.5rem;
     position: relative;
-    color: #6b7280;
+    color: #d1d5db !important;
     line-height: 1.6;
 }
 
@@ -138,7 +142,7 @@
     content: "✓";
     position: absolute;
     left: 0;
-    color: #10b981;
+    color: #34d399;
     font-weight: bold;
 }
 

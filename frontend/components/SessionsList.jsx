@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import './SessionsList.css';
 
-function SessionsList() {
+function SessionsList({ token, showToast }) {
     const [sessions, setSessions] = useState([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
@@ -11,15 +11,21 @@ function SessionsList() {
     const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api';
 
     useEffect(() => {
-        fetchSessions();
-    }, []);
+        if (token) {
+            fetchSessions();
+        }
+    }, [token]);
 
     const fetchSessions = async () => {
         setLoading(true);
         setError(null);
 
         try {
-            const response = await fetch(`${API_BASE_URL}/sessions`);
+            const response = await fetch(`${API_BASE_URL}/sessions`, {
+                headers: {
+                    'Authorization': `Bearer ${token}`
+                }
+            });
 
             if (!response.ok) {
                 throw new Error('Failed to fetch sessions');
@@ -35,8 +41,31 @@ function SessionsList() {
     };
 
     const viewSummary = (sessionId) => {
-        // This would ideally navigate to summary view
-        window.location.href = `/#/summary/${sessionId}`;
+        navigate(`/summary/${sessionId}`);
+    };
+
+    const handleDeleteSession = async (sessionId, e) => {
+        e.stopPropagation();
+        if (!window.confirm("Are you sure you want to delete this session permanently?")) return;
+
+        try {
+            const response = await fetch(`${API_BASE_URL}/sessions/${sessionId}`, {
+                method: 'DELETE',
+                headers: {
+                    'Authorization': `Bearer ${token}`
+                }
+            });
+
+            if (!response.ok) {
+                const errData = await response.json();
+                throw new Error(errData.detail || 'Failed to delete session');
+            }
+
+            showToast('Session deleted successfully', 'success');
+            fetchSessions();
+        } catch (err) {
+            showToast(err.message || 'Error deleting session', 'error');
+        }
     };
 
     return (
@@ -92,12 +121,20 @@ function SessionsList() {
                                                 </span>
                                             </td>
                                             <td>
-                                                <button
-                                                    className="view-btn"
-                                                    onClick={() => viewSummary(session.session_id)}
-                                                >
-                                                    View Summary
-                                                </button>
+                                                <div className="actions-cell">
+                                                    <button
+                                                        className="view-btn"
+                                                        onClick={() => viewSummary(session.session_id)}
+                                                    >
+                                                        View
+                                                    </button>
+                                                    <button
+                                                        className="delete-btn"
+                                                        onClick={(e) => handleDeleteSession(session.session_id, e)}
+                                                    >
+                                                        🗑️ Delete
+                                                    </button>
+                                                </div>
                                             </td>
                                         </tr>
                                     ))}

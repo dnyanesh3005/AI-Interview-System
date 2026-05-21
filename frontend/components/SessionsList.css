@@ -1,10 +1,10 @@
 .sessions-container {
     max-width: 1200px;
     margin: 0 auto;
-    background: white;
+    background: rgba(0,0,0,0.6);
     border-radius: 1rem;
     padding: 2rem;
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+    box-shadow: 0 4px 12px rgba(0,0,0,0.3);
 }
 
 .sessions-header {
@@ -13,7 +13,7 @@
     align-items: center;
     margin-bottom: 2rem;
     padding-bottom: 2rem;
-    border-bottom: 2px solid #e5e7eb;
+    border-bottom: 2px solid rgba(255,255,255,0.2);
 }
 
 .sessions-header h1 {
@@ -23,7 +23,7 @@
 
 .refresh-btn {
     background-color: #667eea;
-    color: white;
+    color: #fff;
     padding: 0.5rem 1rem;
     border: none;
     border-radius: 0.5rem;
@@ -49,13 +49,13 @@
 .error-message {
     background-color: #fee2e2;
     border: 1px solid #fecaca;
-    color: #991b1b;
+    color: #ff7b7b;
     border-radius: 0.5rem;
 }
 
 .error-message button {
-    background-color: #991b1b;
-    color: white;
+    background-color: #ff7b7b;
+    color: #fff;
     margin-top: 1rem;
     padding: 0.5rem 1rem;
     border: none;
@@ -67,7 +67,7 @@
 .empty-state {
     text-align: center;
     padding: 3rem;
-    color: #6b7280;
+    color: #e5e7eb;
 }
 
 .empty-state p {
@@ -197,6 +197,31 @@
 
     .view-btn {
         padding: 0.35rem 0.75rem;
-        font-size: 0.8rem;
+        font-size: 0.85rem;
     }
+}
+
+.actions-cell {
+    display: flex;
+    gap: 0.5rem;
+    align-items: center;
+}
+
+.delete-btn {
+    background-color: transparent;
+    border: 1px solid #ef4444;
+    color: #ef4444;
+    padding: 0.5rem 1rem;
+    border-radius: 0.35rem;
+    cursor: pointer;
+    font-weight: 500;
+    font-size: 0.9rem;
+    transition: all 0.3s ease;
+}
+
+.delete-btn:hover {
+    background-color: #ef4444;
+    color: white;
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(239, 68, 68, 0.3);
 }

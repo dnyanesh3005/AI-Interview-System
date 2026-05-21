@@ -58,6 +58,8 @@ class RAGPipeline:
                 "Full Stack Engineer": self._get_fullstack_knowledge(),
                 "Data Scientist": self._get_datascience_knowledge(),
                 "DevOps Engineer": self._get_devops_knowledge(),
+                "Frontend Developer": self._get_frontend_knowledge(),
+                "Data Analyst": self._get_data_analyst_knowledge(),
             }
             
             if role not in knowledge_sources:
@@ -342,8 +344,62 @@ class RAGPipeline:
         - Implementing monitoring and alerting
         - Troubleshooting infrastructure issues
         - Security and compliance
-        - Performance optimization
         - Disaster recovery and backup strategies
+        """
+    
+    def _get_frontend_knowledge(self) -> str:
+        """Frontend Developer domain knowledge"""
+        return """
+        Frontend Development focuses on the user-facing part of web applications, emphasizing user interface (UI), user experience (UX), and web performance.
+        
+        Core Concepts:
+        1. HTML5 & Semantic Web: Proper DOM structure, accessibility (WCAG, ARIA attributes), SEO practices.
+        2. Modern CSS: Flexbox, Grid, CSS Variables, responsive web design, CSS-in-JS, CSS modules, animations, and transitions.
+        3. JavaScript ES6+: Closures, prototype inheritance, asynchronous programming (Promises, async/await), event loop, DOM manipulation.
+        4. Modern SPA Frameworks (e.g., React, Vue, Angular): Component-based architecture, state management (Redux, Zustand, Context API), hooks, virtual DOM, lifecycle methods, routing.
+        5. Build Tools & Bundlers: Vite, Webpack, Babel, Turbopack, npm/yarn/pnpm.
+        6. Performance Optimization: Lazy loading, code splitting, image optimization, caching strategies, Core Web Vitals (LCP, FID, CLS).
+        7. Testing: Unit testing (Jest, Vitest), component testing (React Testing Library), end-to-end testing (Cypress, Playwright).
+        8. Security: Cross-Site Scripting (XSS) prevention, Content Security Policy (CSP), secure storage (cookies vs localStorage).
+        
+        Interview Focus Areas:
+        - Component state management and render optimizations.
+        - Performance profiling and fixing slow renders/re-renders.
+        - Developing highly responsive and interactive layouts.
+        - Asynchronous data fetching, status overlays, and error boundaries.
+        - Accessibility guidelines and testing frameworks.
+        """
+
+    def _get_data_analyst_knowledge(self) -> str:
+        """Data Analyst domain knowledge"""
+        return """
+        Data Analysis involves collecting, cleaning, processing, and analyzing data to discover insights and inform business decisions.
+        
+        Core Concepts:
+        1. Data Querying & Wrangling: SQL (joins, subqueries, CTEs, window functions), data cleaning, handling missing values, filtering.
+        2. Statistical Analysis: Mean, median, mode, standard deviation, correlation vs causation, probability distributions, hypothesis testing.
+        3. Data Visualization: Best practices for charting, dashboard design, choosing correct chart types (bar, line, scatter, cohort analysis).
+        4. Reporting & Dashboards: Designing business-intelligence reports using BI tools, automating reporting.
+        5. Spreadsheet Proficiency: Excel or Google Sheets (pivot tables, VLOOKUP, INDEX/MATCH, complex formulas).
+        6. Key Business Metrics: Customer Acquisition Cost (CAC), Lifetime Value (LTV), Monthly Recurring Revenue (MRR), Churn Rate, ROI, conversion funnels.
+        
+        Languages & Tools:
+        - SQL (PostgreSQL, MySQL, BigQuery, Snowflake)
+        - Python (Pandas, NumPy, Matplotlib, Seaborn) or R
+        - BI Tools (Tableau, Power BI, Looker Studio)
+        - Spreadsheets (Excel, Google Sheets)
+        
+        Key Skills:
+        - Translating complex data queries into actionable business recommendations.
+        - Generating concise reports and automated pipelines.
+        - Conducting root-cause analyses for business trends (e.g., sudden drop in active users).
+        - Defining and tracking KPIs for different organizational departments.
+        
+        Interview Focus Areas:
+        - Writing efficient SQL queries to aggregate and transform transactional data.
+        - Analyzing and presenting findings from A/B tests or user cohort datasets.
+        - Designing key dashboards to track product engagement metrics.
+        - Explaining data limitations and statistical significance in layman's terms.
         """
     
     def initialize(self):

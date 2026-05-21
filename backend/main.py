@@ -3,13 +3,17 @@ FastAPI Backend for AI-Powered Candidate Screening System
 Core orchestration and API endpoints - PRODUCTION READY
 """
 
-from fastapi import FastAPI, UploadFile, File, HTTPException
+from fastapi import FastAPI, UploadFile, File, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel
 from typing import List, Optional
 import os
 import logging
 import uuid
+import hashlib
+import secrets
+import re
 from datetime import datetime
 from io import BytesIO
 
@@ -46,7 +50,45 @@ resume_parser = ResumeParser()
 rag_pipeline = RAGPipeline()
 question_generator = QuestionGenerator(rag_pipeline)
 
+# Active user tokens store (in-memory)
+ACTIVE_TOKENS = {}
+
+security = HTTPBearer()
+
+async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)) -> dict:
+    token = credentials.credentials
+    if token not in ACTIVE_TOKENS:
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
+    return ACTIVE_TOKENS[token]
+
+def hash_password(password: str) -> str:
+    salt = secrets.token_bytes(16)
+    key = hashlib.pbkdf2_hmac('sha256', password.encode('utf-8'), salt, 100000)
+    return f"{salt.hex()}:{key.hex()}"
+
+def verify_password(password: str, hashed_password: str) -> bool:
+    try:
+        salt_hex, key_hex = hashed_password.split(':')
+        salt = bytes.fromhex(salt_hex)
+        expected_key = bytes.fromhex(key_hex)
+        actual_key = hashlib.pbkdf2_hmac('sha256', password.encode('utf-8'), salt, 100000)
+        return secrets.compare_digest(expected_key, actual_key)
+    except Exception:
+        return False
+
+def is_valid_email(email: str) -> bool:
+    return bool(re.match(r"[^@]+@[^@]+\.[^@]+", email))
+
 # ============ Data Models ============
+
+class RegisterRequest(BaseModel):
+    username: str
+    email: str
+    password: str
+
+class LoginRequest(BaseModel):
+    username: str
+    password: str
 
 class RoleSelection(BaseModel):
     role: str
@@ -76,8 +118,82 @@ async def health_check():
     """Health check endpoint"""
     return {"status": "healthy", "service": "AI Candidate Screening System"}
 
+@app.post("/api/auth/register")
+async def register(req: RegisterRequest):
+    username = req.username.strip()
+    email = req.email.strip()
+    password = req.password
+    
+    if len(username) < 3:
+        raise HTTPException(status_code=400, detail="Username must be at least 3 characters long")
+    if len(password) < 6:
+        raise HTTPException(status_code=400, detail="Password must be at least 6 characters long")
+    if not is_valid_email(email):
+        raise HTTPException(status_code=400, detail="Invalid email format")
+        
+    # Check if username or email already exists
+    if db.get_user_by_username(username):
+        raise HTTPException(status_code=400, detail="Username is already taken")
+    if db.get_user_by_email(email):
+        raise HTTPException(status_code=400, detail="Email is already registered")
+        
+    user_id = str(uuid.uuid4())
+    pw_hash = hash_password(password)
+    
+    success = db.create_user(user_id, username, email, pw_hash)
+    if not success:
+        raise HTTPException(status_code=500, detail="Could not create user")
+        
+    return {"success": True, "message": "User registered successfully"}
+
+@app.post("/api/auth/login")
+async def login(req: LoginRequest):
+    username = req.username.strip()
+    password = req.password
+    
+    user = db.get_user_by_username(username)
+    if not user or not verify_password(password, user["password_hash"]):
+        raise HTTPException(status_code=401, detail="Invalid username or password")
+        
+    token = str(uuid.uuid4())
+    ACTIVE_TOKENS[token] = {
+        "id": user["id"],
+        "username": user["username"],
+        "email": user["email"]
+    }
+    
+    return {
+        "success": True,
+        "token": token,
+        "user": {
+            "user_id": user["id"],
+            "username": user["username"],
+            "email": user["email"]
+        }
+    }
+
+@app.delete("/api/sessions/{session_id}")
+async def delete_session(session_id: str, current_user: dict = Depends(get_current_user)):
+    """Delete an interview session and its related data"""
+    try:
+        # Check ownership and delete
+        success = db.delete_session(session_id, current_user["id"])
+        if not success:
+            raise HTTPException(status_code=404, detail="Session not found or unauthorized")
+        
+        # Remove from session manager cache
+        if session_id in session_manager.active_sessions:
+            del session_manager.active_sessions[session_id]
+            
+        return {"success": True, "message": "Session deleted successfully"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error deleting session: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.post("/api/upload-resume")
-async def upload_resume(file: UploadFile = File(...)):
+async def upload_resume(file: UploadFile = File(...), current_user: dict = Depends(get_current_user)):
     """
     Upload and process candidate resume
     
@@ -117,7 +233,7 @@ async def upload_resume(file: UploadFile = File(...)):
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/select-role")
-async def select_role(role_data: RoleSelection):
+async def select_role(role_data: RoleSelection, current_user: dict = Depends(get_current_user)):
     """
     User selects target role
     
@@ -129,7 +245,9 @@ async def select_role(role_data: RoleSelection):
             "AI/ML Engineer",
             "Full Stack Engineer",
             "Data Scientist",
-            "DevOps Engineer"
+            "DevOps Engineer",
+            "Frontend Developer",
+            "Data Analyst"
         ]
         
         if role_data.role not in supported_roles:
@@ -154,7 +272,7 @@ async def select_role(role_data: RoleSelection):
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/start-interview")
-async def start_interview(resume_data: dict):
+async def start_interview(resume_data: dict, current_user: dict = Depends(get_current_user)):
     """
     Initialize interview session
     
@@ -167,11 +285,15 @@ async def start_interview(resume_data: dict):
         if not resume_data.get("role"):
             raise HTTPException(status_code=400, detail="Role required")
         
+        total_questions = resume_data.get("total_questions", 5)
+        
         # Create session
         session = session_manager.create_session(
             candidate_name=resume_data.get("candidate_name"),
             role=resume_data.get("role"),
-            resume_data=resume_data
+            resume_data=resume_data,
+            user_id=current_user["id"],
+            total_questions=total_questions
         )
         
         # Generate first question
@@ -192,7 +314,7 @@ async def start_interview(resume_data: dict):
             "session_id": session["session_id"],
             "question": question,
             "question_number": 1,
-            "total_questions": 5
+            "total_questions": total_questions
         }
     except HTTPException:
         raise
@@ -201,7 +323,7 @@ async def start_interview(resume_data: dict):
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/submit-answer")
-async def submit_answer(answer_data: AnswerSubmission):
+async def submit_answer(answer_data: AnswerSubmission, current_user: dict = Depends(get_current_user)):
     """
     Submit candidate answer and get next question
     
@@ -212,6 +334,13 @@ async def submit_answer(answer_data: AnswerSubmission):
         if not answer_data.answer.strip():
             raise HTTPException(status_code=400, detail="Answer cannot be empty")
         
+        # Get session data
+        session = session_manager.get_session(answer_data.session_id)
+        if not session:
+            raise HTTPException(status_code=404, detail="Session not found")
+        if session.get("user_id") != current_user["id"]:
+            raise HTTPException(status_code=403, detail="Unauthorized access to this session")
+            
         # Store answer
         db.store_answer(
             session_id=answer_data.session_id,
@@ -219,16 +348,14 @@ async def submit_answer(answer_data: AnswerSubmission):
             answer=answer_data.answer
         )
         
-        # Get session data
-        session = session_manager.get_session(answer_data.session_id)
-        if not session:
-            raise HTTPException(status_code=404, detail="Session not found")
-        
         question_count = db.get_question_count(answer_data.session_id)
+        total_questions = session.get("total_questions", 5)
         
         # Check if interview is complete
-        if question_count >= 5:  # Total questions
+        if question_count >= total_questions:  # Total questions
             db.complete_session(answer_data.session_id)
+            if answer_data.session_id in session_manager.active_sessions:
+                session_manager.active_sessions[answer_data.session_id]["status"] = "completed"
             return {
                 "success": True,
                 "interview_complete": True,
@@ -254,7 +381,7 @@ async def submit_answer(answer_data: AnswerSubmission):
             "interview_complete": False,
             "question": next_question,
             "question_number": question_count + 1,
-            "total_questions": 5
+            "total_questions": total_questions
         }
     except HTTPException:
         raise
@@ -263,7 +390,7 @@ async def submit_answer(answer_data: AnswerSubmission):
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/skip-question")
-async def skip_question(skip_data: SkipQuestion):
+async def skip_question(skip_data: SkipQuestion, current_user: dict = Depends(get_current_user)):
     """
     Skip the current question and receive the next one.
 
@@ -274,6 +401,8 @@ async def skip_question(skip_data: SkipQuestion):
         session = session_manager.get_session(skip_data.session_id)
         if not session:
             raise HTTPException(status_code=404, detail="Session not found")
+        if session.get("user_id") != current_user["id"]:
+            raise HTTPException(status_code=403, detail="Unauthorized access to this session")
 
         # Store a skipped placeholder answer so question_count advances
         db.store_answer(
@@ -283,10 +412,13 @@ async def skip_question(skip_data: SkipQuestion):
         )
 
         question_count = db.get_question_count(skip_data.session_id)
+        total_questions = session.get("total_questions", 5)
 
         # Check if interview is complete
-        if question_count >= 5:
+        if question_count >= total_questions:
             db.complete_session(skip_data.session_id)
+            if skip_data.session_id in session_manager.active_sessions:
+                session_manager.active_sessions[skip_data.session_id]["status"] = "completed"
             return {
                 "success": True,
                 "interview_complete": True,
@@ -312,7 +444,7 @@ async def skip_question(skip_data: SkipQuestion):
             "interview_complete": False,
             "question": next_question,
             "question_number": question_count + 1,
-            "total_questions": 5
+            "total_questions": total_questions
         }
     except HTTPException:
         raise
@@ -321,7 +453,7 @@ async def skip_question(skip_data: SkipQuestion):
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/interview-summary/{session_id}")
-async def get_interview_summary(session_id: str):
+async def get_interview_summary(session_id: str, current_user: dict = Depends(get_current_user)):
     """
     Get complete interview summary and analysis
     
@@ -331,6 +463,8 @@ async def get_interview_summary(session_id: str):
         session = session_manager.get_session(session_id)
         if not session:
             raise HTTPException(status_code=404, detail="Session not found")
+        if session.get("user_id") != current_user["id"]:
+            raise HTTPException(status_code=403, detail="Unauthorized access to this session")
         
         qa_pairs = db.get_qa_pairs(session_id)
         
@@ -344,7 +478,7 @@ async def get_interview_summary(session_id: str):
                 "candidate_name": session["candidate_name"],
                 "role": session["role"],
                 "timestamp": session.get("created_at", datetime.now().isoformat()),
-                "total_questions": len(qa_pairs),
+                "total_questions": session.get("total_questions", len(qa_pairs)),
                 "qa_pairs": qa_pairs,
                 "analysis": analysis
             }
@@ -356,10 +490,10 @@ async def get_interview_summary(session_id: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/sessions")
-async def list_sessions():
+async def list_sessions(current_user: dict = Depends(get_current_user)):
     """Get all interview sessions"""
     try:
-        sessions = session_manager.list_sessions()
+        sessions = db.list_sessions_for_user(current_user["id"])
         return {
             "success": True,
             "sessions": sessions,

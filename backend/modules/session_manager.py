@@ -27,7 +27,9 @@ class SessionManager:
         self,
         candidate_name: str,
         role: str,
-        resume_data: Dict
+        resume_data: Dict,
+        user_id: Optional[str] = None,
+        total_questions: int = 5
     ) -> Dict:
         """
         Create new interview session
@@ -36,6 +38,8 @@ class SessionManager:
             candidate_name: Candidate's name
             role: Target job role
             resume_data: Extracted resume data
+            user_id: ID of the authenticated user
+            total_questions: Number of interview questions
             
         Returns:
             Dictionary with session information
@@ -53,7 +57,9 @@ class SessionManager:
                 "created_at": datetime.now().isoformat(),
                 "status": "in_progress",
                 "question_count": 0,
-                "answer_count": 0
+                "answer_count": 0,
+                "user_id": user_id,
+                "total_questions": total_questions
             }
             
             # Persist to database

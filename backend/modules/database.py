@@ -25,6 +25,17 @@ class Database:
             self.conn = sqlite3.connect(self.db_path)
             cursor = self.conn.cursor()
             
+            # Users table
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS users (
+                    id TEXT PRIMARY KEY,
+                    username TEXT UNIQUE NOT NULL,
+                    email TEXT UNIQUE NOT NULL,
+                    password_hash TEXT NOT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            ''')
+            
             # Sessions table
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS sessions (
@@ -36,9 +47,21 @@ class Database:
                     resume_data TEXT,
                     created_at TIMESTAMP,
                     updated_at TIMESTAMP,
-                    status TEXT DEFAULT 'in_progress'
+                    status TEXT DEFAULT 'in_progress',
+                    user_id TEXT,
+                    total_questions INTEGER DEFAULT 5
                 )
             ''')
+            
+            # Check if user_id and total_questions columns exist in sessions table (migrations)
+            cursor.execute("PRAGMA table_info(sessions)")
+            columns = [col[1] for col in cursor.fetchall()]
+            if "user_id" not in columns:
+                cursor.execute("ALTER TABLE sessions ADD COLUMN user_id TEXT")
+                self.conn.commit()
+            if "total_questions" not in columns:
+                cursor.execute("ALTER TABLE sessions ADD COLUMN total_questions INTEGER DEFAULT 5")
+                self.conn.commit()
             
             # Questions table
             cursor.execute('''
@@ -98,8 +121,8 @@ class Database:
             
             cursor.execute('''
                 INSERT INTO sessions 
-                (id, candidate_name, role, email, phone, resume_data, created_at, updated_at, status)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                (id, candidate_name, role, email, phone, resume_data, created_at, updated_at, status, user_id, total_questions)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''', (
                 session_id,
                 session_data.get("candidate_name"),
@@ -109,7 +132,9 @@ class Database:
                 json.dumps(session_data.get("resume_data", {})),
                 datetime.now(),
                 datetime.now(),
-                "in_progress"
+                "in_progress",
+                session_data.get("user_id"),
+                session_data.get("total_questions", 5)
             ))
             
             self.conn.commit()
@@ -119,6 +144,93 @@ class Database:
         except Exception as e:
             logger.error(f"Error creating session: {str(e)}")
             raise
+
+    def create_user(self, user_id: str, username: str, email: str, password_hash: str) -> bool:
+        """Create a new user"""
+        try:
+            cursor = self.conn.cursor()
+            cursor.execute('''
+                INSERT INTO users (id, username, email, password_hash, created_at)
+                VALUES (?, ?, ?, ?, ?)
+            ''', (user_id, username, email, password_hash, datetime.now()))
+            self.conn.commit()
+            return True
+        except Exception as e:
+            logger.error(f"Error creating user: {str(e)}")
+            return False
+
+    def get_user_by_username(self, username: str) -> Optional[Dict]:
+        """Get user by username"""
+        try:
+            cursor = self.conn.cursor()
+            cursor.execute('SELECT id, username, email, password_hash FROM users WHERE username = ?', (username,))
+            row = cursor.fetchone()
+            if row:
+                return {"id": row[0], "username": row[1], "email": row[2], "password_hash": row[3]}
+            return None
+        except Exception as e:
+            logger.error(f"Error getting user by username: {str(e)}")
+            return None
+
+    def get_user_by_email(self, email: str) -> Optional[Dict]:
+        """Get user by email"""
+        try:
+            cursor = self.conn.cursor()
+            cursor.execute('SELECT id, username, email, password_hash FROM users WHERE email = ?', (email,))
+            row = cursor.fetchone()
+            if row:
+                return {"id": row[0], "username": row[1], "email": row[2], "password_hash": row[3]}
+            return None
+        except Exception as e:
+            logger.error(f"Error getting user by email: {str(e)}")
+            return None
+
+    def delete_session(self, session_id: str, user_id: str) -> bool:
+        """Delete an interview session and its dependent questions, answers, and metadata"""
+        try:
+            cursor = self.conn.cursor()
+            # Verify ownership
+            cursor.execute('SELECT id FROM sessions WHERE id = ? AND user_id = ?', (session_id, user_id))
+            if not cursor.fetchone():
+                logger.warning(f"Unauthorized or non-existent delete attempt of session {session_id} by user {user_id}")
+                return False
+                
+            cursor.execute('DELETE FROM answers WHERE session_id = ?', (session_id,))
+            cursor.execute('DELETE FROM questions WHERE session_id = ?', (session_id,))
+            cursor.execute('DELETE FROM interview_metadata WHERE session_id = ?', (session_id,))
+            cursor.execute('DELETE FROM sessions WHERE id = ?', (session_id,))
+            self.conn.commit()
+            logger.info(f"Session {session_id} deleted successfully")
+            return True
+        except Exception as e:
+            logger.error(f"Error deleting session {session_id}: {str(e)}")
+            return False
+
+    def list_sessions_for_user(self, user_id: str) -> List[Dict]:
+        """List all sessions belonging to a specific user"""
+        try:
+            cursor = self.conn.cursor()
+            cursor.execute('''
+                SELECT id, candidate_name, role, created_at, status 
+                FROM sessions 
+                WHERE user_id = ?
+                ORDER BY created_at DESC
+            ''', (user_id,))
+            
+            sessions = []
+            for row in cursor.fetchall():
+                sessions.append({
+                    "session_id": row[0],
+                    "candidate_name": row[1],
+                    "role": row[2],
+                    "created_at": row[3],
+                    "status": row[4]
+                })
+            
+            return sessions
+        except Exception as e:
+            logger.error(f"Error listing sessions for user {user_id}: {str(e)}")
+            return []
     
     def store_question(self, session_id: str, question: Dict) -> str:
         """Store interview question"""
@@ -258,7 +370,7 @@ class Database:
             cursor = self.conn.cursor()
             cursor.execute(
                 '''SELECT id, candidate_name, role, email, phone, resume_data, 
-                   created_at, status FROM sessions WHERE id = ?''',
+                   created_at, status, user_id, total_questions FROM sessions WHERE id = ?''',
                 (session_id,)
             )
             
@@ -274,7 +386,9 @@ class Database:
                 "phone": result[4],
                 "resume_data": json.loads(result[5]) if result[5] else {},
                 "created_at": result[6],
-                "status": result[7]
+                "status": result[7],
+                "user_id": result[8],
+                "total_questions": result[9]
             }
             
         except Exception as e:

@@ -1,7 +1,10 @@
 import React, { useState, useEffect } from 'react';
+import { useParams, useNavigate } from 'react-router-dom';
 import './InterviewSummary.css';
 
-function InterviewSummary({ sessionId, onNewSession }) {
+function InterviewSummary({ token, showToast, onNewSession }) {
+    const { sessionId } = useParams();
+    const navigate = useNavigate();
     const [summary, setSummary] = useState(null);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
@@ -10,15 +13,21 @@ function InterviewSummary({ sessionId, onNewSession }) {
     const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api';
 
     useEffect(() => {
-        fetchSummary();
-    }, []);
+        if (token && sessionId) {
+            fetchSummary();
+        }
+    }, [token, sessionId]);
 
     const fetchSummary = async () => {
         setLoading(true);
         setError(null);
 
         try {
-            const response = await fetch(`${API_BASE_URL}/interview-summary/${sessionId}`);
+            const response = await fetch(`${API_BASE_URL}/interview-summary/${sessionId}`, {
+                headers: {
+                    'Authorization': `Bearer ${token}`
+                }
+            });
 
             if (!response.ok) {
                 throw new Error('Failed to fetch summary');
@@ -30,6 +39,29 @@ function InterviewSummary({ sessionId, onNewSession }) {
             setError(err.message);
         } finally {
             setLoading(false);
+        }
+    };
+
+    const handleDeleteSession = async () => {
+        if (!window.confirm("Are you sure you want to delete this session permanently? This action cannot be undone.")) return;
+
+        try {
+            const response = await fetch(`${API_BASE_URL}/sessions/${sessionId}`, {
+                method: 'DELETE',
+                headers: {
+                    'Authorization': `Bearer ${token}`
+                }
+            });
+
+            if (!response.ok) {
+                const errData = await response.json();
+                throw new Error(errData.detail || 'Failed to delete session');
+            }
+
+            showToast('Session deleted successfully', 'success');
+            navigate('/sessions');
+        } catch (err) {
+            showToast(err.message || 'Error deleting session', 'error');
         }
     };
 
@@ -228,6 +260,9 @@ function InterviewSummary({ sessionId, onNewSession }) {
                         </button>
                         <button className="new-session-btn" onClick={onNewSession}>
                             🔄 Start New Interview
+                        </button>
+                        <button className="delete-summary-btn" onClick={handleDeleteSession}>
+                            🗑️ Delete Session
                         </button>
                     </div>
                 </>

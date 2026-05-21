@@ -1,14 +1,17 @@
 :root {
-    --primary-color: #6366f1;
-    --secondary-color: #8b5cf6;
+    --primary-color: #8b5cf6;
+    --secondary-color: #6366f1;
     --success-color: #10b981;
     --danger-color: #ef4444;
     --warning-color: #f59e0b;
-    --dark-bg: #1f2937;
-    --light-bg: #f9fafb;
-    --border-color: #e5e7eb;
-    --text-dark: #111827;
-    --text-light: #6b7280;
+    --dark-bg: #090d16;
+    --light-bg: #0f172a;
+    --border-color: rgba(255, 255, 255, 0.08);
+    --text-dark: #f3f4f6;
+    --text-light: #9ca3af;
+    --glass-bg: rgba(15, 23, 42, 0.5);
+    --glass-border: rgba(255, 255, 255, 0.08);
+    --glass-hover: rgba(255, 255, 255, 0.12);
 }
 
 * {
@@ -18,13 +21,16 @@
 }
 
 body {
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
-        'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
-        sans-serif;
+    background-color: var(--dark-bg);
+    background-image: 
+        radial-gradient(at 0% 0%, rgba(139, 92, 246, 0.18) 0px, transparent 50%),
+        radial-gradient(at 100% 100%, rgba(99, 102, 241, 0.18) 0px, transparent 50%),
+        radial-gradient(at 50% 50%, rgba(139, 92, 246, 0.08) 0px, transparent 60%);
+    background-attachment: fixed;
+    color: var(--text-dark);
+    font-family: 'Outfit', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
-    background-color: var(--light-bg);
-    color: var(--text-dark);
 }
 
 .App {
@@ -41,6 +47,56 @@ body {
     padding: 2rem;
 }
 
+/* Glassmorphic Container Overrides */
+.App .resume-upload-container,
+.App .role-selection-container,
+.App .interview-container,
+.App .sessions-container,
+.App .summary-container,
+.App .login-glass-card {
+    background: var(--glass-bg) !important;
+    backdrop-filter: blur(16px) !important;
+    -webkit-backdrop-filter: blur(16px) !important;
+    border: 1px solid var(--glass-border) !important;
+    box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.5) !important;
+    color: var(--text-dark) !important;
+}
+
+/* Card details glassmorphic styling */
+.App .overview-card,
+.App .question-section,
+.App .qa-item,
+.App .qa-card,
+.App .role-card,
+.App .transcript-preview,
+.App .upload-area,
+.App .selected-file,
+.App .info-section {
+    background: rgba(30, 41, 59, 0.45) !important;
+    border: 1px solid rgba(255, 255, 255, 0.06) !important;
+    color: var(--text-dark) !important;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2) !important;
+}
+
+/* Navigation overrides to match glass theme */
+.App .navigation {
+    background: rgba(9, 13, 22, 0.5) !important;
+    backdrop-filter: blur(12px) !important;
+    -webkit-backdrop-filter: blur(12px) !important;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08) !important;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3) !important;
+}
+
+.App .new-session-btn {
+    background: linear-gradient(135deg, #8b5cf6 0%, #6366f1 100%) !important;
+    color: white !important;
+}
+
+.App .new-session-btn:hover {
+    background: linear-gradient(135deg, #7c3aed 0%, #4f46e5 100%) !important;
+    transform: translateY(-1px);
+}
+
 /* Loading and Error States */
 .loading-overlay {
     position: fixed;
@@ -48,7 +104,8 @@ body {
     left: 0;
     right: 0;
     bottom: 0;
-    background-color: rgba(0, 0, 0, 0.5);
+    background-color: rgba(9, 13, 22, 0.8);
+    backdrop-filter: blur(8px);
     display: flex;
     flex-direction: column;
     align-items: center;
@@ -59,7 +116,7 @@ body {
 .spinner {
     width: 50px;
     height: 50px;
-    border: 4px solid var(--border-color);
+    border: 3px solid rgba(139, 92, 246, 0.1);
     border-top-color: var(--primary-color);
     border-radius: 50%;
     animation: spin 1s linear infinite;
@@ -72,8 +129,8 @@ body {
 }
 
 .error-banner {
-    background-color: #fee2e2;
-    border-left: 4px solid var(--danger-color);
+    background-color: rgba(239, 68, 68, 0.15);
+    border: 1px solid rgba(239, 68, 68, 0.3);
     padding: 1rem;
     margin-bottom: 2rem;
     border-radius: 0.5rem;
@@ -83,27 +140,27 @@ body {
 }
 
 .error-banner p {
-    color: #991b1b;
+    color: #fca5a5;
     flex: 1;
 }
 
 .error-banner button {
     background: none;
     border: none;
-    color: #991b1b;
+    color: #fca5a5;
     cursor: pointer;
     font-weight: 600;
     padding-left: 1rem;
 }
 
-/* Buttons */
+/* Global button enhancements */
 button {
     padding: 0.75rem 1.5rem;
     border: none;
     border-radius: 0.5rem;
     cursor: pointer;
     font-size: 1rem;
-    font-weight: 500;
+    font-weight: 600;
     transition: all 0.3s ease;
 }
 
@@ -117,45 +174,63 @@ button:disabled {
     cursor: not-allowed;
 }
 
-.primary-btn {
-    background-color: var(--primary-color);
-    color: white;
+.primary-btn,
+.App .upload-button,
+.App .submit-button,
+.App .login-btn {
+    background: linear-gradient(135deg, #8b5cf6 0%, #6366f1 100%) !important;
+    color: white !important;
+    border: none !important;
+    box-shadow: 0 4px 14px rgba(139, 92, 246, 0.4) !important;
 }
 
-.primary-btn:hover:not(:disabled) {
-    background-color: #4f46e5;
+.primary-btn:hover:not(:disabled),
+.App .upload-button:hover:not(:disabled),
+.App .submit-button:hover:not(:disabled),
+.App .login-btn:hover:not(:disabled) {
+    background: linear-gradient(135deg, #7c3aed 0%, #4f46e5 100%) !important;
+    box-shadow: 0 6px 20px rgba(139, 92, 246, 0.6) !important;
 }
 
-.secondary-btn {
-    background-color: var(--light-bg);
-    color: var(--text-dark);
-    border: 1px solid var(--border-color);
+.secondary-btn,
+.App .skip-button,
+.App .refresh-btn {
+    background: rgba(255, 255, 255, 0.05) !important;
+    border: 1px solid rgba(255, 255, 255, 0.1) !important;
+    color: #e5e7eb !important;
 }
 
-.secondary-btn:hover:not(:disabled) {
-    background-color: #f3f4f6;
+.secondary-btn:hover:not(:disabled),
+.App .skip-button:hover:not(:disabled),
+.App .refresh-btn:hover:not(:disabled) {
+    background: rgba(255, 255, 255, 0.1) !important;
+    border-color: rgba(255, 255, 255, 0.2) !important;
+    color: #ffffff !important;
 }
 
-/* Forms */
+/* Form fields glassmorphic styling */
 input[type="text"],
 input[type="email"],
+input[type="password"],
 textarea,
 select {
     width: 100%;
     padding: 0.75rem;
-    border: 1px solid var(--border-color);
+    background: rgba(15, 23, 42, 0.6) !important;
+    border: 1px solid rgba(255, 255, 255, 0.1) !important;
     border-radius: 0.5rem;
     font-size: 1rem;
+    color: #ffffff !important;
     font-family: inherit;
-    transition: border-color 0.3s ease;
+    transition: all 0.3s ease;
 }
 
 input:focus,
 textarea:focus,
 select:focus {
     outline: none;
-    border-color: var(--primary-color);
-    box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.1);
+    border-color: var(--primary-color) !important;
+    box-shadow: 0 0 12px rgba(139, 92, 246, 0.3) !important;
 }
 
 textarea {
@@ -163,23 +238,26 @@ textarea {
     min-height: 100px;
 }
 
-/* Typography */
+/* Typography Gradient Headers */
 h1 {
     font-size: 2.5rem;
     margin-bottom: 0.5rem;
-    color: var(--text-dark);
+    background: linear-gradient(90deg, #a78bfa, #818cf8);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    display: inline-block;
 }
 
 h2 {
     font-size: 2rem;
     margin-bottom: 1rem;
-    color: var(--text-dark);
+    color: #ffffff;
 }
 
 h3 {
     font-size: 1.5rem;
     margin-bottom: 0.75rem;
-    color: var(--text-dark);
+    color: #ffffff;
 }
 
 p {
@@ -187,20 +265,114 @@ p {
     color: var(--text-light);
 }
 
-/* Cards */
-.card {
-    background: white;
-    border-radius: 0.75rem;
-    padding: 1.5rem;
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
-    transition: all 0.3s ease;
+/* Tables styling */
+.App .sessions-table table {
+    background: transparent !important;
 }
 
-.card:hover {
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+.App .sessions-table thead {
+    background: rgba(255, 255, 255, 0.03) !important;
+    border-bottom: 2px solid rgba(255, 255, 255, 0.08) !important;
 }
 
-/* Grid Layouts */
+.App .sessions-table tbody tr {
+    border-bottom: 1px solid rgba(255, 255, 255, 0.05) !important;
+}
+
+.App .sessions-table tbody tr:hover {
+    background: rgba(255, 255, 255, 0.02) !important;
+}
+
+.App .sessions-table th {
+    color: #ffffff !important;
+    font-weight: 600;
+}
+
+.App .sessions-table td {
+    color: #e5e7eb !important;
+}
+
+.App .status-badge.in_progress {
+    background-color: rgba(245, 158, 11, 0.15) !important;
+    color: #fbbf24 !important;
+}
+
+.App .status-badge.completed {
+    background-color: rgba(16, 185, 129, 0.15) !important;
+    color: #34d399 !important;
+}
+
+/* Hover effects for lists & cards */
+.App .role-card:hover {
+    border-color: rgba(139, 92, 246, 0.4) !important;
+    transform: translateY(-2px);
+    box-shadow: 0 8px 24px rgba(139, 92, 246, 0.15) !important;
+}
+
+.App .role-card.selected {
+    border-color: #8b5cf6 !important;
+    background: rgba(139, 92, 246, 0.12) !important;
+    box-shadow: 0 0 15px rgba(139, 92, 246, 0.2) !important;
+}
+
+.App .qa-card:hover {
+    border-color: rgba(139, 92, 246, 0.3) !important;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3) !important;
+}
+
+/* Toast Notification Styles */
+.toast {
+    position: fixed;
+    top: 20px;
+    right: 20px;
+    padding: 1rem 1.5rem;
+    border-radius: 0.5rem;
+    backdrop-filter: blur(12px);
+    z-index: 1000;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+    animation: slideIn 0.3s ease-out;
+}
+
+.toast-success {
+    background: rgba(16, 185, 129, 0.2);
+    border: 1px solid rgba(16, 185, 129, 0.4);
+    color: #34d399;
+}
+
+.toast-error {
+    background: rgba(239, 68, 68, 0.2);
+    border: 1px solid rgba(239, 68, 68, 0.4);
+    color: #fca5a5;
+}
+
+@keyframes slideIn {
+    from {
+        transform: translateX(100%);
+        opacity: 0;
+    }
+    to {
+        transform: translateX(0);
+        opacity: 1;
+    }
+}
+
+/* Scrollbar custom styling */
+::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+}
+::-webkit-scrollbar-track {
+    background: #090d16;
+}
+::-webkit-scrollbar-thumb {
+    background: rgba(139, 92, 246, 0.3);
+    border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+    background: rgba(139, 92, 246, 0.5);
+}
+
+/* Utility layout grids */
 .grid {
     display: grid;
     gap: 2rem;
@@ -231,57 +403,4 @@ p {
     .grid-3 {
         grid-template-columns: 1fr;
     }
-}
-
-/* Utility Classes */
-.text-center {
-    text-align: center;
-}
-
-.text-muted {
-    color: var(--text-light);
-}
-
-.mt-1 {
-    margin-top: 0.5rem;
-}
-
-.mt-2 {
-    margin-top: 1rem;
-}
-
-.mt-3 {
-    margin-top: 1.5rem;
-}
-
-.mt-4 {
-    margin-top: 2rem;
-}
-
-.mb-1 {
-    margin-bottom: 0.5rem;
-}
-
-.mb-2 {
-    margin-bottom: 1rem;
-}
-
-.mb-3 {
-    margin-bottom: 1.5rem;
-}
-
-.mb-4 {
-    margin-bottom: 2rem;
-}
-
-.gap-1 {
-    gap: 0.5rem;
-}
-
-.gap-2 {
-    gap: 1rem;
-}
-
-.gap-3 {
-    gap: 1.5rem;
 }

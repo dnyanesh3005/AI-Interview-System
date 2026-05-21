@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import './InterviewFlow.css';
 
-function InterviewFlow({ sessionId, resumeData, role, initialQuestion, onComplete }) {
+function InterviewFlow({ sessionId, resumeData, role, initialQuestion, onComplete, token, showToast }) {
     const [currentQuestion, setCurrentQuestion] = useState(initialQuestion || null);
     const [questionNumber, setQuestionNumber] = useState(1);
     const [totalQuestions, setTotalQuestions] = useState(5);
@@ -138,7 +138,10 @@ function InterviewFlow({ sessionId, resumeData, role, initialQuestion, onComplet
         try {
             const response = await fetch(`${API_BASE_URL}/skip-question`, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: { 
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${token}`
+                },
                 body: JSON.stringify({
                     session_id: sessionId,
                     question_id: currentQuestion.question_id,
@@ -163,7 +166,7 @@ function InterviewFlow({ sessionId, resumeData, role, initialQuestion, onComplet
             ]);
 
             if (data.interview_complete) {
-                onComplete();
+                onComplete(sessionId);
             } else {
                 setCurrentQuestion(data.question);
                 setQuestionNumber(prev => prev + 1);
@@ -198,7 +201,10 @@ function InterviewFlow({ sessionId, resumeData, role, initialQuestion, onComplet
 
             const response = await fetch(`${API_BASE_URL}/submit-answer`, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: { 
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${token}`
+                },
                 body: JSON.stringify({
                     session_id: sessionId,
                     question_id: currentQuestion.question_id,
@@ -226,7 +232,7 @@ function InterviewFlow({ sessionId, resumeData, role, initialQuestion, onComplet
 
             // Check if interview is complete
             if (data.interview_complete) {
-                onComplete();
+                onComplete(sessionId);
             } else {
                 // Move to next question
                 setCurrentQuestion(data.question);
@@ -330,8 +336,18 @@ function InterviewFlow({ sessionId, resumeData, role, initialQuestion, onComplet
 
                     <div className="answer-section">
                         {error && (
-                            <div className="error-message" style={{ marginBottom: '1rem' }}>
-                                <p>⚠️ {error}</p>
+                            <div className="error-notification-bar">
+                                <div className="error-content">
+                                    <span className="error-icon">⚠️</span>
+                                    <span className="error-text">Failed to submit: {error}</span>
+                                </div>
+                                <button 
+                                    className="retry-submission-btn"
+                                    onClick={handleAnswerSubmit}
+                                    disabled={isAnswering || isSkipping}
+                                >
+                                    🔄 Retry Submission
+                                </button>
                             </div>
                         )}
 
@@ -405,6 +421,16 @@ function InterviewFlow({ sessionId, resumeData, role, initialQuestion, onComplet
                                 }
                             </div>
                         ))}
+                    </div>
+                </div>
+            )}
+
+            {isAnswering && (
+                <div className="submitting-overlay">
+                    <div className="submitting-card">
+                        <div className="submitting-spinner"></div>
+                        <h3>Uploading Response</h3>
+                        <p>Uploading and analyzing transcript...</p>
                     </div>
                 </div>
             )}

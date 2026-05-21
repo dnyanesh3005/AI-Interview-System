@@ -19,12 +19,13 @@
 .role-content h1 {
     text-align: center;
     margin-bottom: 0.5rem;
+    color: #ffffff;
 }
 
 .role-content .subtitle {
     text-align: center;
     margin-bottom: 3rem;
-    color: #6b7280;
+    color: #e5e7eb;
     font-size: 1.1rem;
 }
 
@@ -36,8 +37,8 @@
 }
 
 .role-card {
-    background: white;
-    border: 2px solid #e5e7eb;
+    background: #1f2937;
+    border: 2px solid #374151;
     border-radius: 1rem;
     padding: 2rem;
     cursor: pointer;
@@ -64,11 +65,11 @@
 
 .role-card h3 {
     margin-bottom: 0.75rem;
-    color: #111827;
+    color: #e5e7eb;
 }
 
 .role-description {
-    color: #6b7280;
+    color: #e5e7eb;
     font-size: 0.95rem;
     line-height: 1.6;
     margin-bottom: 1rem;
@@ -102,13 +103,52 @@
     right: 1rem;
     background-color: #10b981;
     color: white;
-    width: 2rem;
-    height: 2rem;
-    border-radius: 50%;
-    display: flex;
-    align-items: center;
-    justify-content: center;
+    padding: 0.25rem 0.75rem;
+    border-radius: 1rem;
+    font-size: 0.8rem;
     font-weight: bold;
+}
+
+.question-count-section {
+    margin-bottom: 2.5rem;
+    text-align: left;
+}
+
+.question-count-section h3 {
+    font-size: 1.1rem;
+    font-weight: 600;
+    color: #f8fafc;
+    margin-bottom: 0.75rem;
+}
+
+.count-options {
+    display: flex;
+    gap: 1rem;
+}
+
+.count-btn {
+    flex: 1;
+    background: rgba(15, 23, 42, 0.4);
+    border: 2px solid rgba(255, 255, 255, 0.1);
+    color: #cbd5e1;
+    padding: 0.75rem 1rem;
+    border-radius: 0.75rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.3s ease;
+}
+
+.count-btn:hover {
+    border-color: rgba(139, 92, 246, 0.4);
+    background: rgba(15, 23, 42, 0.6);
+    color: #ffffff;
+}
+
+.count-btn.active {
+    background: linear-gradient(135deg, #8b5cf6, #6366f1);
+    border-color: #8b5cf6;
+    color: #ffffff;
+    box-shadow: 0 4px 15px rgba(139, 92, 246, 0.4);
 }
 
 .role-info-box {
