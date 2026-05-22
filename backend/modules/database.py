@@ -22,7 +22,7 @@ class Database:
     def initialize(self):
         """Create database tables if they don't exist"""
         try:
-            self.conn = sqlite3.connect(self.db_path)
+            self.conn = sqlite3.connect(self.db_path, check_same_thread=False)
             cursor = self.conn.cursor()
             
             # Users table
@@ -35,6 +35,23 @@ class Database:
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
             ''')
+            
+            # Migration: Check if username column exists, if not add it
+            cursor.execute("PRAGMA table_info(users)")
+            columns = [col[1] for col in cursor.fetchall()]
+            if "username" not in columns:
+                logger.info("Migrating users table: adding username column...")
+                # Add username column
+                cursor.execute("ALTER TABLE users ADD COLUMN username TEXT")
+                # Migrate email to username for existing users
+                cursor.execute("UPDATE users SET username = email WHERE username IS NULL")
+                # Add unique constraint on username
+                try:
+                    cursor.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_username ON users(username)")
+                except:
+                    pass
+                self.conn.commit()
+                logger.info("Migration completed")
             
             # Sessions table
             cursor.execute('''
@@ -105,6 +122,17 @@ class Database:
                     FOREIGN KEY (session_id) REFERENCES sessions(id)
                 )
             ''')
+            # Migration for answers table (add video_path if not exists)
+            cursor.execute("PRAGMA table_info(answers)")
+            columns = [col[1] for col in cursor.fetchall()]
+            if "video_path" not in columns:
+                logger.info("Migrating answers table: adding video_path column...")
+                cursor.execute("ALTER TABLE answers ADD COLUMN video_path TEXT")
+                self.conn.commit()
+            if "duration_seconds" not in columns:
+                logger.info("Migrating answers table: adding duration_seconds column...")
+                cursor.execute("ALTER TABLE answers ADD COLUMN duration_seconds INTEGER")
+                self.conn.commit()
             
             self.conn.commit()
             logger.info("Database initialized successfully")
@@ -233,27 +261,49 @@ class Database:
             return []
     
     def store_question(self, session_id: str, question: Dict) -> str:
-        """Store interview question"""
+        """Store interview question (UPSERT style to handle retries/race conditions)"""
         try:
             cursor = self.conn.cursor()
             question_id = question.get("question_id", "")
             
-            cursor.execute('''
-                INSERT INTO questions 
-                (id, session_id, question_number, question_text, question_type, 
-                 difficulty, category, context_used, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ''', (
-                question_id,
-                session_id,
-                question.get("question_number"),
-                question.get("question_text"),
-                question.get("question_type"),
-                question.get("difficulty"),
-                question.get("category"),
-                json.dumps(question.get("context_used", [])),
-                datetime.now()
-            ))
+            # Use UPSERT style checking to handle potential duplicate inserts from concurrent requests
+            cursor.execute('SELECT id FROM questions WHERE id = ?', (question_id,))
+            exists = cursor.fetchone()
+            
+            if exists:
+                cursor.execute('''
+                    UPDATE questions 
+                    SET question_text = ?, question_type = ?, difficulty = ?, 
+                        category = ?, context_used = ?, created_at = ?
+                    WHERE id = ?
+                ''', (
+                    question.get("question_text"),
+                    question.get("question_type"),
+                    question.get("difficulty"),
+                    question.get("category"),
+                    json.dumps(question.get("context_used", [])),
+                    datetime.now(),
+                    question_id
+                ))
+                logger.info(f"Question updated in database: {question_id}")
+            else:
+                cursor.execute('''
+                    INSERT INTO questions 
+                    (id, session_id, question_number, question_text, question_type, 
+                     difficulty, category, context_used, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ''', (
+                    question_id,
+                    session_id,
+                    question.get("question_number"),
+                    question.get("question_text"),
+                    question.get("question_type"),
+                    question.get("difficulty"),
+                    question.get("category"),
+                    json.dumps(question.get("context_used", [])),
+                    datetime.now()
+                ))
+                logger.info(f"Question stored in database: {question_id}")
             
             self.conn.commit()
             return question_id
@@ -262,23 +312,36 @@ class Database:
             logger.error(f"Error storing question: {str(e)}")
             raise
     
-    def store_answer(self, session_id: str, question_id: str, answer: str) -> str:
+    def store_answer(self, session_id: str, question_id: str, answer: str, duration_seconds: int = 0, video_path: Optional[str] = None) -> str:
         """Store candidate answer"""
         try:
             cursor = self.conn.cursor()
             answer_id = f"{question_id}_ans"
             
-            cursor.execute('''
-                INSERT INTO answers 
-                (id, session_id, question_id, answer_text, created_at)
-                VALUES (?, ?, ?, ?, ?)
-            ''', (
-                answer_id,
-                session_id,
-                question_id,
-                answer,
-                datetime.now()
-            ))
+            # Use UPSERT style checking to handle potential client retries
+            cursor.execute('SELECT id FROM answers WHERE id = ?', (answer_id,))
+            exists = cursor.fetchone()
+            
+            if exists:
+                cursor.execute('''
+                    UPDATE answers 
+                    SET answer_text = ?, duration_seconds = ?, video_path = ?, created_at = ?
+                    WHERE id = ?
+                ''', (answer, duration_seconds, video_path, datetime.now(), answer_id))
+            else:
+                cursor.execute('''
+                    INSERT INTO answers 
+                    (id, session_id, question_id, answer_text, duration_seconds, video_path, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                ''', (
+                    answer_id,
+                    session_id,
+                    question_id,
+                    answer,
+                    duration_seconds,
+                    video_path,
+                    datetime.now()
+                ))
             
             # Update session updated_at
             cursor.execute(
@@ -287,7 +350,7 @@ class Database:
             )
             
             self.conn.commit()
-            logger.info(f"Answer stored for question: {question_id}")
+            logger.info(f"Answer stored/updated for question: {question_id}")
             return answer_id
             
         except Exception as e:
@@ -344,6 +407,20 @@ class Database:
             return count
         except Exception as e:
             logger.error(f"Error getting question count: {str(e)}")
+            return 0
+    
+    def get_answer_count(self, session_id: str) -> int:
+        """Get number of answers submitted in session"""
+        try:
+            cursor = self.conn.cursor()
+            cursor.execute(
+                'SELECT COUNT(*) FROM answers WHERE session_id = ?',
+                (session_id,)
+            )
+            count = cursor.fetchone()[0]
+            return count
+        except Exception as e:
+            logger.error(f"Error getting answer count: {str(e)}")
             return 0
     
     def get_last_question(self, session_id: str) -> Optional[str]:

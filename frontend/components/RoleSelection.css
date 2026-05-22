@@ -1,19 +1,20 @@
 .role-selection-container {
-    min-height: 100vh;
     display: flex;
     align-items: center;
     justify-content: center;
-    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-    padding: 2rem;
+    padding: 1.5rem 0;
+    width: 100%;
 }
 
 .role-content {
-    background: white;
-    border-radius: 1rem;
+    background: rgba(15, 23, 42, 0.5) !important;
+    backdrop-filter: blur(20px);
+    border: 1px solid rgba(255, 255, 255, 0.08) !important;
+    border-radius: 1.5rem;
     padding: 3rem;
     max-width: 1200px;
     width: 100%;
-    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+    box-shadow: 0 25px 60px rgba(0, 0, 0, 0.6) !important;
 }
 
 .role-content h1 {
@@ -53,9 +54,10 @@
 }
 
 .role-card.selected {
-    border-color: #667eea;
-    background: linear-gradient(135deg, #f3f4f6 0%, #eef2ff 100%);
-    box-shadow: 0 10px 30px rgba(102, 126, 234, 0.3);
+    border-color: #8b5cf6 !important;
+    background: rgba(139, 92, 246, 0.12) !important;
+    box-shadow: 0 0 25px rgba(139, 92, 246, 0.35) !important;
+    transform: translateY(-2px);
 }
 
 .role-icon {
@@ -84,17 +86,26 @@
 
 .skill-tag {
     display: inline-block;
-    background-color: #f3f4f6;
-    color: #374151;
+    background-color: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    color: #cbd5e1;
     padding: 0.35rem 0.75rem;
     border-radius: 1rem;
     font-size: 0.85rem;
     font-weight: 500;
+    transition: all 0.2s ease;
+}
+
+.skill-tag:hover {
+    background-color: rgba(139, 92, 246, 0.1);
+    border-color: rgba(139, 92, 246, 0.3);
+    color: #ffffff;
 }
 
 .role-card.selected .skill-tag {
-    background-color: #dbeafe;
-    color: #0c4a6e;
+    background-color: rgba(139, 92, 246, 0.25) !important;
+    color: #ffffff !important;
+    border-color: rgba(139, 92, 246, 0.4) !important;
 }
 
 .selected-indicator {
@@ -152,8 +163,9 @@
 }
 
 .role-info-box {
-    background-color: #ecfdf5;
-    border-left: 4px solid #10b981;
+    background-color: rgba(16, 185, 129, 0.1) !important;
+    border: 1px solid rgba(16, 185, 129, 0.2) !important;
+    border-left: 4px solid #10b981 !important;
     padding: 1rem 1.5rem;
     border-radius: 0.5rem;
     margin-bottom: 2rem;
@@ -164,12 +176,13 @@
 }
 
 .role-info-box p:first-child {
-    color: #065f46;
-    font-weight: 500;
+    color: #34d399 !important;
+    font-weight: 600;
 }
 
 .text-muted {
-    color: #047857;
+    color: #a7f3d0 !important;
+    opacity: 0.8;
 }
 
 .continue-button {

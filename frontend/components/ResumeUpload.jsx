@@ -99,16 +99,7 @@ function ResumeUpload({ onUpload, loading }) {
                     {loading ? 'Processing...' : 'Upload Resume'}
                 </button>
 
-                <div className="info-section">
-                    <h3>What happens next?</h3>
-                    <ul>
-                        <li>Your resume will be analyzed to extract key skills and experience</li>
-                        <li>You'll select a target role for the interview</li>
-                        <li>Dynamic questions will be generated based on your background and the role</li>
-                        <li>You'll answer 5-10 interview questions in real-time</li>
-                        <li>A comprehensive summary will be generated at the end</li>
-                    </ul>
-                </div>
+
             </div>
         </div>
     );

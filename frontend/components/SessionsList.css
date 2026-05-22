@@ -1,31 +1,43 @@
+/* Premium Dark-Glassmorphism Styles for SessionsList Component */
+
 .sessions-container {
     max-width: 1200px;
-    margin: 0 auto;
-    background: rgba(0,0,0,0.6);
-    border-radius: 1rem;
-    padding: 2rem;
-    box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+    margin: 2rem auto;
+    background: rgba(15, 23, 42, 0.45) !important;
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    border: 1px solid rgba(255, 255, 255, 0.08) !important;
+    border-radius: 1.5rem;
+    padding: 2.5rem;
+    box-shadow: 0 25px 60px rgba(0, 0, 0, 0.5) !important;
+    color: #f8fafc;
 }
 
 .sessions-header {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    margin-bottom: 2rem;
-    padding-bottom: 2rem;
-    border-bottom: 2px solid rgba(255,255,255,0.2);
+    margin-bottom: 2.5rem;
+    padding-bottom: 1.5rem;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
 }
 
 .sessions-header h1 {
-    font-size: 2rem;
+    font-size: 2.25rem;
+    font-weight: 800;
+    letter-spacing: -0.025em;
+    background: linear-gradient(135deg, #a78bfa 0%, #c084fc 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
     margin: 0;
+    display: inline-block;
 }
 
 .refresh-btn {
-    background-color: #667eea;
-    color: #fff;
-    padding: 0.5rem 1rem;
-    border: none;
+    background: rgba(255, 255, 255, 0.05) !important;
+    border: 1px solid rgba(255, 255, 255, 0.1) !important;
+    color: #e5e7eb !important;
+    padding: 0.6rem 1.25rem;
     border-radius: 0.5rem;
     cursor: pointer;
     font-weight: 600;
@@ -33,66 +45,80 @@
 }
 
 .refresh-btn:hover {
-    background-color: #5558d4;
+    background: rgba(255, 255, 255, 0.1) !important;
+    border-color: rgba(255, 255, 255, 0.2) !important;
+    color: #ffffff !important;
     transform: translateY(-2px);
-    box-shadow: 0 4px 12px rgba(102, 126, 234, 0.3);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
 }
 
 .loading,
 .error-message {
     text-align: center;
-    padding: 2rem;
-    font-size: 1rem;
-    color: #6b7280;
+    padding: 3.5rem;
+    font-size: 1.1rem;
+    color: #94a3b8;
 }
 
 .error-message {
-    background-color: #fee2e2;
-    border: 1px solid #fecaca;
-    color: #ff7b7b;
-    border-radius: 0.5rem;
+    background-color: rgba(239, 68, 68, 0.1);
+    border: 1px solid rgba(239, 68, 68, 0.2);
+    color: #fca5a5;
+    border-radius: 0.75rem;
+    max-width: 500px;
+    margin: 2rem auto;
 }
 
 .error-message button {
-    background-color: #ff7b7b;
+    background-color: #ef4444;
     color: #fff;
-    margin-top: 1rem;
-    padding: 0.5rem 1rem;
+    margin-top: 1.25rem;
+    padding: 0.6rem 1.5rem;
     border: none;
-    border-radius: 0.35rem;
+    border-radius: 0.5rem;
     cursor: pointer;
-    font-weight: 500;
+    font-weight: 700;
+    transition: all 0.2s;
+}
+
+.error-message button:hover {
+    background-color: #dc2626;
 }
 
 .empty-state {
     text-align: center;
-    padding: 3rem;
-    color: #e5e7eb;
+    padding: 4rem 2rem;
+    color: #cbd5e1;
 }
 
 .empty-state p {
-    font-size: 1.1rem;
-    margin-bottom: 1.5rem;
+    font-size: 1.15rem;
+    margin-bottom: 1.75rem;
+    color: #94a3b8;
 }
 
 .empty-state button {
-    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-    color: white;
-    padding: 0.75rem 1.5rem;
+    background: linear-gradient(135deg, #8b5cf6 0%, #6366f1 100%) !important;
+    color: white !important;
+    padding: 0.85rem 1.75rem;
     border: none;
-    border-radius: 0.5rem;
+    border-radius: 0.75rem;
     cursor: pointer;
-    font-weight: 600;
+    font-weight: 700;
     transition: all 0.3s ease;
+    box-shadow: 0 4px 14px rgba(139, 92, 246, 0.3);
 }
 
 .empty-state button:hover {
     transform: translateY(-2px);
-    box-shadow: 0 10px 25px rgba(102, 126, 234, 0.4);
+    background: linear-gradient(135deg, #7c3aed 0%, #4f46e5 100%) !important;
+    box-shadow: 0 8px 24px rgba(139, 92, 246, 0.45);
 }
 
 .sessions-table {
     overflow-x: auto;
+    border-radius: 0.75rem;
+    border: 1px solid rgba(255, 255, 255, 0.05);
 }
 
 .sessions-table table {
@@ -101,127 +127,158 @@
 }
 
 .sessions-table thead {
-    background-color: #f9fafb;
-    border-bottom: 2px solid #e5e7eb;
+    background-color: rgba(255, 255, 255, 0.03);
+    border-bottom: 2px solid rgba(255, 255, 255, 0.08);
 }
 
 .sessions-table th {
-    padding: 1rem;
+    padding: 1.25rem 1rem;
     text-align: left;
     font-weight: 600;
-    color: #111827;
+    color: #ffffff;
+    font-size: 0.95rem;
+    letter-spacing: 0.02em;
 }
 
 .sessions-table tbody tr {
-    border-bottom: 1px solid #e5e7eb;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
     transition: background-color 0.2s ease;
 }
 
 .sessions-table tbody tr:hover {
-    background-color: #f9fafb;
+    background-color: rgba(255, 255, 255, 0.02);
 }
 
 .sessions-table td {
-    padding: 1rem;
-    color: #111827;
+    padding: 1.25rem 1rem;
+    color: #cbd5e1;
+    font-size: 0.95rem;
 }
 
 .session-id code {
-    background-color: #f3f4f6;
+    background-color: rgba(15, 23, 42, 0.6);
+    border: 1px solid rgba(255, 255, 255, 0.1);
     padding: 0.25rem 0.5rem;
     border-radius: 0.35rem;
     font-family: 'Courier New', monospace;
     font-size: 0.85rem;
-    color: #667eea;
+    color: #c084fc;
 }
 
 .status-badge {
-    display: inline-block;
+    display: inline-flex;
+    align-items: center;
     padding: 0.35rem 0.75rem;
     border-radius: 0.5rem;
-    font-size: 0.85rem;
-    font-weight: 500;
+    font-size: 0.8rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
 }
 
 .status-badge.in_progress {
-    background-color: #fef3c7;
-    color: #92400e;
+    background-color: rgba(245, 158, 11, 0.15) !important;
+    color: #fbbf24 !important;
+    border: 1px solid rgba(245, 158, 11, 0.25);
 }
 
 .status-badge.completed {
-    background-color: #dcfce7;
-    color: #166534;
+    background-color: rgba(16, 185, 129, 0.15) !important;
+    color: #34d399 !important;
+    border: 1px solid rgba(16, 185, 129, 0.25);
 }
 
 .view-btn {
-    background-color: #667eea;
-    color: white;
-    padding: 0.5rem 1rem;
+    background: linear-gradient(135deg, #8b5cf6 0%, #6366f1 100%) !important;
+    color: white !important;
+    padding: 0.55rem 1.15rem;
     border: none;
-    border-radius: 0.35rem;
+    border-radius: 0.5rem;
     cursor: pointer;
-    font-weight: 500;
-    font-size: 0.9rem;
+    font-weight: 700;
+    font-size: 0.85rem;
     transition: all 0.3s ease;
+    box-shadow: 0 4px 12px rgba(139, 92, 246, 0.25);
 }
 
 .view-btn:hover {
-    background-color: #5558d4;
+    background: linear-gradient(135deg, #7c3aed 0%, #4f46e5 100%) !important;
     transform: translateY(-2px);
-    box-shadow: 0 4px 12px rgba(102, 126, 234, 0.3);
+    box-shadow: 0 6px 16px rgba(139, 92, 246, 0.4);
+}
+
+.resume-btn {
+    background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%) !important;
+    color: white !important;
+    padding: 0.55rem 1.15rem;
+    border: none;
+    border-radius: 0.5rem;
+    cursor: pointer;
+    font-weight: 700;
+    font-size: 0.85rem;
+    transition: all 0.3s ease;
+    box-shadow: 0 4px 12px rgba(245, 158, 11, 0.25);
+}
+
+.resume-btn:hover {
+    background: linear-gradient(135deg, #fbbf24 0%, #ea580c 100%) !important;
+    transform: translateY(-2px);
+    box-shadow: 0 6px 16px rgba(245, 158, 11, 0.4);
+}
+
+.actions-cell {
+    display: flex;
+    gap: 0.75rem;
+    align-items: center;
+}
+
+.delete-btn {
+    background-color: rgba(239, 68, 68, 0.05) !important;
+    border: 1px solid rgba(239, 68, 68, 0.2) !important;
+    color: #ef4444 !important;
+    padding: 0.55rem 1.15rem;
+    border-radius: 0.5rem;
+    cursor: pointer;
+    font-weight: 700;
+    font-size: 0.85rem;
+    transition: all 0.3s ease;
+}
+
+.delete-btn:hover {
+    background-color: #ef4444 !important;
+    color: white !important;
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(239, 68, 68, 0.3);
 }
 
 @media (max-width: 768px) {
     .sessions-container {
-        padding: 1rem;
+        padding: 1.5rem;
+        margin: 1rem;
     }
 
     .sessions-header {
         flex-direction: column;
         align-items: flex-start;
-        gap: 1rem;
+        gap: 1.25rem;
     }
 
     .sessions-header h1 {
-        font-size: 1.5rem;
+        font-size: 1.75rem;
     }
 
     .sessions-table {
-        font-size: 0.9rem;
+        font-size: 0.85rem;
     }
 
     .sessions-table th,
     .sessions-table td {
-        padding: 0.75rem;
+        padding: 1rem 0.75rem;
     }
 
-    .view-btn {
-        padding: 0.35rem 0.75rem;
-        font-size: 0.85rem;
+    .view-btn,
+    .delete-btn {
+        padding: 0.45rem 0.85rem;
+        font-size: 0.8rem;
     }
-}
-
-.actions-cell {
-    display: flex;
-    gap: 0.5rem;
-    align-items: center;
-}
-
-.delete-btn {
-    background-color: transparent;
-    border: 1px solid #ef4444;
-    color: #ef4444;
-    padding: 0.5rem 1rem;
-    border-radius: 0.35rem;
-    cursor: pointer;
-    font-weight: 500;
-    font-size: 0.9rem;
-    transition: all 0.3s ease;
-}
-
-.delete-btn:hover {
-    background-color: #ef4444;
-    color: white;
-    transform: translateY(-2px);
-    box-shadow: 0 4px 12px rgba(239, 68, 68, 0.3);
-}
+}

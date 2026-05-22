@@ -1,10 +1,10 @@
 import React, { useState, useEffect, useRef } from 'react';
 import './InterviewFlow.css';
 
-function InterviewFlow({ sessionId, resumeData, role, initialQuestion, onComplete, token, showToast }) {
+function InterviewFlow({ sessionId, resumeData, role, initialQuestion, totalQuestions: propTotalQuestions = 5, onComplete, token, showToast }) {
     const [currentQuestion, setCurrentQuestion] = useState(initialQuestion || null);
     const [questionNumber, setQuestionNumber] = useState(1);
-    const [totalQuestions, setTotalQuestions] = useState(5);
+    const [totalQuestions, setTotalQuestions] = useState(propTotalQuestions);
     const [answer, setAnswer] = useState('');
     const [isAnswering, setIsAnswering] = useState(false);
     const [isSkipping, setIsSkipping] = useState(false);
@@ -17,16 +17,27 @@ function InterviewFlow({ sessionId, resumeData, role, initialQuestion, onComplet
     // Video/Audio Recording States
     const [isRecording, setIsRecording] = useState(false);
     const [mediaStream, setMediaStream] = useState(null);
+    const [videoBlob, setVideoBlob] = useState(null);
     const videoRef = useRef(null);
+    const mediaRecorderRef = useRef(null);
+    const chunksRef = useRef([]);
     const recognitionRef = useRef(null);
-    const timerRef = useRef(null);
 
-    const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api';
+    const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000/api';
+
+    useEffect(() => {
+        if (propTotalQuestions) {
+            setTotalQuestions(propTotalQuestions);
+        }
+    }, [propTotalQuestions]);
 
     useEffect(() => {
         // If we received an initialQuestion from parent, use it directly
         if (initialQuestion) {
             setCurrentQuestion(initialQuestion);
+            if (initialQuestion.question_number) {
+                setQuestionNumber(initialQuestion.question_number);
+            }
             setLoading(false);
         }
     }, [initialQuestion]);
@@ -64,75 +75,136 @@ function InterviewFlow({ sessionId, resumeData, role, initialQuestion, onComplet
         };
     }, []);
 
+    // Live timer linked to isRecording state
+    useEffect(() => {
+        let timer = null;
+        if (isRecording) {
+            timer = setInterval(() => {
+                setRecordingDuration(prev => prev + 1);
+            }, 1000);
+        } else {
+            if (timer) clearInterval(timer);
+        }
+        return () => {
+            if (timer) clearInterval(timer);
+        };
+    }, [isRecording]);
+
     // Cleanup media tracks when component unmounts
     useEffect(() => {
         return () => {
             if (mediaStream) {
                 mediaStream.getTracks().forEach(track => track.stop());
             }
-            if (timerRef.current) clearInterval(timerRef.current);
         };
     }, [mediaStream]);
 
     useEffect(() => {
-        if (videoRef.current && mediaStream) {
+        if (videoRef.current) {
             videoRef.current.srcObject = mediaStream;
         }
-    }, [mediaStream, isRecording]);
+    }, [mediaStream]);
 
     const toggleRecording = async () => {
         if (isRecording) {
-            // Stop recording
-            setIsRecording(false);
+            // Stop MediaRecorder
+            if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+                mediaRecorderRef.current.stop();
+            }
+            
+            // Stop speech recognition
             if (recognitionRef.current) {
                 recognitionRef.current.stop();
             }
+            
+            // Turn off camera and mic lights
             if (mediaStream) {
                 mediaStream.getTracks().forEach(track => track.stop());
                 setMediaStream(null);
             }
-            if (timerRef.current) {
-                clearInterval(timerRef.current);
-                timerRef.current = null;
-            }
+            
+            setIsRecording(false);
         } else {
             // Start recording
             try {
+                setError(null);
+                setVideoBlob(null);
+                setRecordingDuration(0);
                 if (!answerStartTime) {
                     setAnswerStartTime(Date.now());
                 }
-                setRecordingDuration(0);
-                timerRef.current = setInterval(() => {
-                    setRecordingDuration(prev => prev + 1);
-                }, 1000);
+                
                 const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
                 setMediaStream(stream);
+                
+                // Initialize MediaRecorder
+                chunksRef.current = [];
+                let options = { mimeType: 'video/webm;codecs=vp9,opus' };
+                if (!MediaRecorder.isTypeSupported(options.mimeType)) {
+                    options = { mimeType: 'video/webm;codecs=vp8,opus' };
+                }
+                if (!MediaRecorder.isTypeSupported(options.mimeType)) {
+                    options = { mimeType: 'video/webm' };
+                }
+                if (!MediaRecorder.isTypeSupported(options.mimeType)) {
+                    options = { mimeType: '' };
+                }
+                
+                const mediaRecorder = new MediaRecorder(stream, options);
+                mediaRecorderRef.current = mediaRecorder;
+                
+                mediaRecorder.ondataavailable = (event) => {
+                    if (event.data && event.data.size > 0) {
+                        chunksRef.current.push(event.data);
+                    }
+                };
+                
+                mediaRecorder.onstop = () => {
+                    const blob = new Blob(chunksRef.current, { type: 'video/webm' });
+                    setVideoBlob(blob);
+                    if (showToast) {
+                        showToast('Video response captured! Ready to submit.', 'success');
+                    }
+                };
+                
+                mediaRecorder.start(1000);
                 setIsRecording(true);
 
                 if (recognitionRef.current) {
                     recognitionRef.current.start();
                 }
             } catch (err) {
-                setError("Could not access camera/microphone. Please allow permissions.");
+                let userFriendlyMsg = "Could not access camera/microphone. Please allow camera and microphone permissions in your browser settings.";
+                if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
+                    userFriendlyMsg = "Camera and Microphone permissions were denied. Please enable them in your browser's address bar settings to record your video response.";
+                } else if (err.name === 'NotFoundError' || err.name === 'DevicesNotFoundError') {
+                    userFriendlyMsg = "No camera or microphone device was found. Please connect a webcam/microphone to continue.";
+                }
+                setError(userFriendlyMsg);
+                if (showToast) {
+                    showToast(userFriendlyMsg, 'error');
+                }
                 console.error("Media access error:", err);
             }
         }
     };
 
     const handleSkipQuestion = async () => {
-        if (!currentQuestion) return;
+        if (!currentQuestion || isSkipping || isAnswering) return;
         setIsSkipping(true);
         setError(null);
 
         // Stop any active recording first
         if (isRecording) {
+            if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+                mediaRecorderRef.current.stop();
+            }
             setIsRecording(false);
             if (recognitionRef.current) recognitionRef.current.stop();
             if (mediaStream) {
                 mediaStream.getTracks().forEach(track => track.stop());
                 setMediaStream(null);
             }
-            if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
         }
 
         try {
@@ -174,6 +246,7 @@ function InterviewFlow({ sessionId, resumeData, role, initialQuestion, onComplet
                 setAnswer('');
                 setAnswerStartTime(null);
                 setRecordingDuration(0);
+                setVideoBlob(null);
             }
         } catch (err) {
             setError(err.message);
@@ -183,8 +256,9 @@ function InterviewFlow({ sessionId, resumeData, role, initialQuestion, onComplet
     };
 
     const handleAnswerSubmit = async () => {
-        if (!answer.trim()) {
-            alert('Please record your answer before submitting. Use the Start Video Response button.');
+        if (isAnswering || isSkipping) return;
+        if (!videoBlob) {
+            alert('Please record your answer video before submitting. Use the Start Video Response button.');
             return;
         }
 
@@ -197,20 +271,24 @@ function InterviewFlow({ sessionId, resumeData, role, initialQuestion, onComplet
         setError(null);
 
         try {
-            const duration = answerStartTime ? Math.round((Date.now() - answerStartTime) / 1000) : 0;
+            const duration = recordingDuration || (answerStartTime ? Math.round((Date.now() - answerStartTime) / 1000) : 0);
+
+            const formData = new FormData();
+            formData.append('session_id', sessionId);
+            formData.append('question_id', currentQuestion.question_id);
+            formData.append('answer', answer.trim() || '[Video response recorded]');
+            formData.append('duration_seconds', String(duration));
+            
+            if (videoBlob) {
+                formData.append('video', videoBlob, `response_${sessionId}_${currentQuestion.question_id}.webm`);
+            }
 
             const response = await fetch(`${API_BASE_URL}/submit-answer`, {
                 method: 'POST',
                 headers: { 
-                    'Content-Type': 'application/json',
                     'Authorization': `Bearer ${token}`
                 },
-                body: JSON.stringify({
-                    session_id: sessionId,
-                    question_id: currentQuestion.question_id,
-                    answer: answer,
-                    duration_seconds: duration,
-                }),
+                body: formData,
             });
 
             if (!response.ok) {
@@ -225,7 +303,7 @@ function InterviewFlow({ sessionId, resumeData, role, initialQuestion, onComplet
                 ...prev,
                 {
                     question: currentQuestion.question_text,
-                    answer: answer,
+                    answer: answer.trim() || '[Video Response]',
                     questionNumber: questionNumber,
                 }
             ]);
@@ -240,6 +318,8 @@ function InterviewFlow({ sessionId, resumeData, role, initialQuestion, onComplet
                 if (data.total_questions) setTotalQuestions(data.total_questions);
                 setAnswer('');
                 setAnswerStartTime(null);
+                setRecordingDuration(0);
+                setVideoBlob(null);
             }
         } catch (err) {
             setError(err.message);
@@ -351,7 +431,7 @@ function InterviewFlow({ sessionId, resumeData, role, initialQuestion, onComplet
                             </div>
                         )}
 
-                        <label>Your Response:</label>
+                        <label className="answer-label">Your Response:</label>
                         <div className="recording-controls">
                             <button
                                 id="toggle-recording-btn"
@@ -369,14 +449,28 @@ function InterviewFlow({ sessionId, resumeData, role, initialQuestion, onComplet
                         </div>
 
                         {isRecording && (
-                            <div className="video-preview-container">
+                            <div className="video-preview-container animate-fade-in">
+                                <div className="webcam-badge">
+                                    <span className="dot"></span>
+                                    <span>LIVE</span>
+                                </div>
                                 <video
                                     ref={videoRef}
                                     autoPlay
                                     muted
                                     playsInline
-                                    style={{ width: '100%', maxHeight: '300px', objectFit: 'cover', display: 'block' }}
+                                    style={{ width: '100%', maxHeight: '340px', objectFit: 'cover', display: 'block' }}
                                 />
+                            </div>
+                        )}
+
+                        {!isRecording && videoBlob && (
+                            <div className="recording-status-box animate-fade-in">
+                                <div className="status-icon">✓</div>
+                                <div className="status-details">
+                                    <p className="status-title">Video Response Captured</p>
+                                    <p className="status-subtitle">Duration: {formatDuration(recordingDuration)} | Ready to submit</p>
+                                </div>
                             </div>
                         )}
 
@@ -400,9 +494,9 @@ function InterviewFlow({ sessionId, resumeData, role, initialQuestion, onComplet
                                 id="submit-answer-btn"
                                 className="submit-button"
                                 onClick={handleAnswerSubmit}
-                                disabled={isAnswering || isSkipping || !answer.trim() || !currentQuestion}
+                                disabled={isAnswering || isSkipping || isRecording || !videoBlob || !currentQuestion}
                             >
-                                {isAnswering ? 'Submitting...' : 'Submit Answer'}
+                                {isAnswering ? 'Uploading Response...' : 'Submit Answer'}
                             </button>
                         </div>
                     </div>

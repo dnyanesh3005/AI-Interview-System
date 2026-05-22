@@ -2,7 +2,7 @@ import React from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import './Navigation.css';
 
-function Navigation({ onNewSession, currentStep, user, onLogout }) {
+function Navigation({ onNewSession, currentStep, user, onLogout, showGuide, onToggleGuide }) {
     const location = useLocation();
     const isDashboard = location.pathname === '/';
     const isSessions = location.pathname === '/sessions';
@@ -25,32 +25,53 @@ function Navigation({ onNewSession, currentStep, user, onLogout }) {
 
             <div className="nav-center">
                 {isDashboard && user && (
-                    <div className="breadcrumb">
-                        {Object.entries(stepLabels).map(([step, label]) => (
-                            <div key={step} className={`breadcrumb-item ${step === currentStep ? 'active' : ''}`}>
-                                <span>{label}</span>
-                            </div>
-                        ))}
+                    <div className="stepper">
+                        {Object.entries(stepLabels).map(([step, label], idx) => {
+                            const steps = Object.keys(stepLabels);
+                            const currentIdx = steps.indexOf(currentStep);
+                            const stepIdx = steps.indexOf(step);
+                            const isActive = step === currentStep;
+                            const isCompleted = stepIdx < currentIdx;
+
+                            return (
+                                <React.Fragment key={step}>
+                                    <div className={`step-node ${isActive ? 'active' : ''} ${isCompleted ? 'completed' : ''}`}>
+                                        <div className="step-circle">
+                                            {isCompleted ? '✓' : idx + 1}
+                                        </div>
+                                        <span className="step-label">{label}</span>
+                                    </div>
+                                    {idx < steps.length - 1 && (
+                                        <div className={`step-line ${stepIdx < currentIdx ? 'active' : ''}`}></div>
+                                    )}
+                                </React.Fragment>
+                            );
+                        })}
                     </div>
                 )}
                 {isSessions && user && (
-                    <div className="breadcrumb">
-                        <div className="breadcrumb-item active">
-                            <span>📋 All Sessions</span>
-                        </div>
+                    <div className="nav-page-badge sessions-badge">
+                        <span className="badge-icon">📋</span>
+                        <span className="badge-text">All Sessions</span>
                     </div>
                 )}
                 {isSummary && user && (
-                    <div className="breadcrumb">
-                        <div className="breadcrumb-item active">
-                            <span>📊 Interview Summary</span>
-                        </div>
+                    <div className="nav-page-badge summary-badge">
+                        <span className="badge-icon">📊</span>
+                        <span className="badge-text">Interview Summary</span>
                     </div>
                 )}
             </div>
 
             {user && (
                 <div className="nav-right">
+                    <button 
+                        className={`toggle-guide-btn ${showGuide ? 'active' : ''}`} 
+                        onClick={onToggleGuide}
+                        title={showGuide ? "Hide process guide" : "Show process guide"}
+                    >
+                        {showGuide ? 'ℹ️ Hide Guide' : 'ℹ️ Show Guide'}
+                    </button>
                     <Link to="/sessions" className="sessions-link">
                         📋 All Sessions
                     </Link>

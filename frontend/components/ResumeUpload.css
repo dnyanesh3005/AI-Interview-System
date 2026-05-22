@@ -1,102 +1,125 @@
 .resume-upload-container {
-    min-height: 100vh;
     display: flex;
     align-items: center;
     justify-content: center;
-    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-    padding: 2rem;
+    padding: 0;
+    width: 100%;
+    height: calc(100vh - 150px);
+    box-sizing: border-box;
 }
 
 .upload-content {
-    background: white;
-    border-radius: 1rem;
-    padding: 3rem;
+    background: rgba(15, 23, 42, 0.5) !important;
+    backdrop-filter: blur(20px);
+    border: 1px solid rgba(255, 255, 255, 0.08) !important;
+    border-radius: 1.5rem;
+    padding: 1.75rem 2.25rem;
     max-width: 600px;
     width: 100%;
-    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+    box-shadow: 0 25px 60px rgba(0, 0, 0, 0.6) !important;
 }
 
 .upload-content h1 {
     text-align: center;
-    margin-bottom: 0.5rem;
+    margin-bottom: 0.25rem;
+    font-size: 1.8rem;
 }
 
 .upload-content .subtitle {
     text-align: center;
-    margin-bottom: 2rem;
-    color: #6b7280;
+    margin-bottom: 1.25rem;
+    color: #94a3b8;
+    font-size: 0.95rem;
 }
 
 .upload-area {
-    border: 3px dashed #d1d5db;
+    border: 2px dashed rgba(255, 255, 255, 0.15) !important;
     border-radius: 1rem;
-    padding: 3rem;
+    padding: 1.5rem 2rem;
     text-align: center;
     cursor: pointer;
-    transition: all 0.3s ease;
-    background-color: #f9fafb;
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    background-color: rgba(15, 23, 42, 0.45) !important;
 }
 
 .upload-area:hover {
-    border-color: #667eea;
-    background-color: #f3f4f6;
+    border-color: #8b5cf6 !important;
+    background-color: rgba(139, 92, 246, 0.03) !important;
+    box-shadow: 0 0 25px rgba(139, 92, 246, 0.15) !important;
+    transform: scale(1.01);
 }
 
 .upload-area.active {
-    border-color: #667eea;
-    background-color: #eef2ff;
+    border-color: #8b5cf6 !important;
+    background-color: rgba(139, 92, 246, 0.08) !important;
+    box-shadow: 0 0 30px rgba(139, 92, 246, 0.25) !important;
+}
+
+@keyframes float {
+    0% { transform: translateY(0px); }
+    50% { transform: translateY(-5px); }
+    100% { transform: translateY(0px); }
 }
 
 .upload-icon {
-    font-size: 3rem;
-    margin-bottom: 1rem;
+    font-size: 2.2rem;
+    margin-bottom: 0.5rem;
+    display: inline-block;
+    animation: float 3s ease-in-out infinite;
 }
 
 .upload-area h2 {
-    font-size: 1.5rem;
-    margin-bottom: 0.5rem;
-    color: #111827;
+    font-size: 1.2rem;
+    margin-bottom: 0.35rem;
+    color: #ffffff !important;
 }
 
 .upload-area p {
-    color: #6b7280;
-    margin-bottom: 0.5rem;
+    color: #94a3b8 !important;
+    margin-bottom: 0.25rem;
+    font-size: 0.9rem;
 }
 
 .file-types {
-    font-size: 0.875rem;
-    color: #9ca3af;
+    font-size: 0.8rem !important;
+    color: #94a3b8 !important;
 }
 
 .selected-file {
-    background-color: #ecfdf5;
-    border-left: 4px solid #10b981;
-    padding: 1rem;
-    border-radius: 0.5rem;
-    margin: 2rem 0;
+    background: rgba(16, 185, 129, 0.08) !important;
+    border: 1px solid rgba(16, 185, 129, 0.15) !important;
+    border-left: 4px solid #10b981 !important;
+    padding: 0.75rem 1.25rem;
+    border-radius: 0.75rem;
+    margin: 1rem 0;
 }
 
 .selected-file p {
-    margin: 0.25rem 0;
-    color: #065f46;
+    margin: 0.15rem 0;
+    color: #a7f3d0 !important;
+    font-size: 0.9rem;
+}
+
+.selected-file p strong {
+    color: #ffffff;
 }
 
 .file-size {
-    font-size: 0.875rem;
-    color: #047857;
+    font-size: 0.8rem !important;
+    color: rgba(167, 243, 208, 0.7) !important;
 }
 
 .upload-button {
     width: 100%;
-    padding: 1rem;
+    padding: 0.85rem;
     background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
     color: white;
     border: none;
     border-radius: 0.5rem;
-    font-size: 1.1rem;
+    font-size: 1.05rem;
     font-weight: 600;
     cursor: pointer;
-    margin-top: 2rem;
+    margin-top: 1.25rem;
     transition: all 0.3s ease;
 }
 
@@ -110,41 +133,7 @@
     cursor: not-allowed;
 }
 
-.info-section {
-    margin-top: 2rem;
-    padding-top: 2rem;
-    border-top: 1px solid rgba(255, 255, 255, 0.1);
-    background: transparent !important;
-    box-shadow: none !important;
-    border-radius: 0 !important;
-}
 
-.info-section h3 {
-    font-size: 1.1rem;
-    margin-bottom: 1rem;
-    color: #ffffff !important;
-}
-
-.info-section ul {
-    list-style: none;
-    padding: 0;
-}
-
-.info-section li {
-    padding: 0.5rem 0;
-    padding-left: 1.5rem;
-    position: relative;
-    color: #d1d5db !important;
-    line-height: 1.6;
-}
-
-.info-section li:before {
-    content: "✓";
-    position: absolute;
-    left: 0;
-    color: #34d399;
-    font-weight: bold;
-}
 
 @media (max-width: 768px) {
     .upload-content {
