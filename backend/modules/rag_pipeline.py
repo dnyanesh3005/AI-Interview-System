@@ -1,351 +1,474 @@
 """
-RAG (Retrieval-Augmented Generation) Pipeline
-Implements knowledge ingestion, embedding, and retrieval
+Hybrid Agentic RAG Pipeline
+Implements FAISS vector search + BM25 keyword retrieval
+with per-session resume indexing and 85%/15% retrieval ratio.
 """
 
-import os
 import logging
-from typing import List, Dict, Tuple
 import pickle
-import json
+from typing import Dict, List, Optional, Tuple
 
-# Vector database and embedding imports
+import numpy as np
+
 try:
     from sentence_transformers import SentenceTransformer
     from sklearn.metrics.pairwise import cosine_similarity
-    import numpy as np
 except ImportError:
-    raise ImportError("Required packages not installed. Run: pip install sentence-transformers scikit-learn numpy")
+    raise ImportError("Run: pip install sentence-transformers scikit-learn")
+
+try:
+    import faiss
+except ImportError:
+    raise ImportError("Run: pip install faiss-cpu")
+
+try:
+    from rank_bm25 import BM25Okapi
+except ImportError:
+    raise ImportError("Run: pip install rank-bm25")
 
 logger = logging.getLogger(__name__)
 
+# ─── Constants ─────────────────────────────────────────────────────────────────
+RESUME_WEIGHT = 0.85   # 85% resume context
+ROLE_WEIGHT   = 0.15   # 15% role/domain knowledge
+RRF_K         = 60     # Reciprocal Rank Fusion constant
+
+
 class RAGPipeline:
     """
-    Retrieval-Augmented Generation Pipeline
-    Handles knowledge ingestion, chunking, embedding, and retrieval
+    Hybrid Agentic RAG Pipeline.
+
+    Two layers:
+    1. Role knowledge base — FAISS + BM25 (loaded once per role)
+    2. Resume index — FAISS + BM25 (built per interview session from structured resume)
+
+    Retrieval merges both layers: 85% resume context + 15% role knowledge.
     """
-    
+
     def __init__(self, embedding_model: str = "all-MiniLM-L6-v2"):
-        """
-        Initialize RAG pipeline
-        
-        Args:
-            embedding_model: HuggingFace model for embeddings
-        """
         self.embedding_model = SentenceTransformer(embedding_model)
-        self.knowledge_bases = {}  # Store loaded KBs
-        self.embeddings_store = {}  # Store embeddings
-        self.chunks_store = {}  # Store text chunks
-        self.kb_status = {}
-        
-        logger.info(f"RAG Pipeline initialized with model: {embedding_model}")
-    
+
+        # Role knowledge: role → {chunks, faiss_index, bm25}
+        self._role_kb: Dict[str, Dict] = {}
+
+        # Resume index: session_id → {chunks, faiss_index, bm25}
+        self._resume_idx: Dict[str, Dict] = {}
+
+        logger.info(f"RAGPipeline initialised with model: {embedding_model}")
+
+    # ──────────────────────────────────────────────────────────────────────────
+    # Public API
+    # ──────────────────────────────────────────────────────────────────────────
+
+    def initialize(self):
+        """Called on startup — no-op, indexes are built lazily."""
+        logger.info("RAG Pipeline ready (lazy indexing)")
+
     def load_knowledge_base(self, role: str) -> bool:
-        """
-        Load and process role-specific knowledge base
-        
-        Args:
-            role: Job role (e.g., 'Backend Engineer', 'AI/ML Engineer')
-            
-        Returns:
-            bool: Success status
-        """
+        """Load and index role-specific domain knowledge."""
+        if role in self._role_kb:
+            return True
         try:
-            # Role-specific knowledge sources
-            knowledge_sources = {
-                "Backend Engineer": self._get_backend_knowledge(),
-                "AI/ML Engineer": self._get_aiml_knowledge(),
-                "Full Stack Engineer": self._get_fullstack_knowledge(),
-                "Data Scientist": self._get_datascience_knowledge(),
-                "DevOps Engineer": self._get_devops_knowledge(),
+            sources = {
+                "Backend Engineer":    self._kb_backend(),
+                "AI/ML Engineer":      self._kb_aiml(),
+                "Full Stack Engineer": self._kb_fullstack(),
+                "Data Scientist":      self._kb_datascience(),
+                "DevOps Engineer":     self._kb_devops(),
+                "Frontend Developer":  self._kb_frontend(),
+                "Data Analyst":        self._kb_data_analyst(),
             }
-            
-            if role not in knowledge_sources:
+            if role not in sources:
                 logger.warning(f"Unknown role: {role}")
                 return False
-            
-            # Get knowledge content
-            knowledge_content = knowledge_sources[role]
-            
-            # Process knowledge base
-            chunks = self._chunk_knowledge(knowledge_content, role)
-            embeddings = self._generate_embeddings(chunks)
-            
-            # Store processed knowledge
-            self.knowledge_bases[role] = knowledge_content
-            self.chunks_store[role] = chunks
-            self.embeddings_store[role] = embeddings
-            self.kb_status[role] = True
-            
-            logger.info(f"Knowledge base loaded for {role}: {len(chunks)} chunks created")
+
+            chunks = self._chunk_text(sources[role])
+            index, embeddings = self._build_faiss(chunks)
+            bm25 = self._build_bm25(chunks)
+
+            self._role_kb[role] = {
+                "chunks": chunks,
+                "faiss": index,
+                "embeddings": embeddings,
+                "bm25": bm25,
+            }
+            logger.info(f"Role KB loaded for '{role}': {len(chunks)} chunks")
             return True
-            
         except Exception as e:
-            logger.error(f"Error loading knowledge base for {role}: {str(e)}")
+            logger.error(f"Error loading KB for {role}: {e}")
             return False
-    
-    def retrieve_context(self, role: str, query: str, top_k: int = 5) -> List[Dict]:
+
+    def build_resume_index(self, session_id: str, resume_data: Dict) -> bool:
         """
-        Retrieve relevant context from knowledge base
-        
-        Args:
-            role: Job role
-            query: Search query
-            top_k: Number of top results to return
-            
-        Returns:
-            List of relevant context chunks with similarity scores
+        Build a per-session FAISS + BM25 index from the candidate's structured resume.
+        Must be called after parsing, before question generation.
         """
         try:
-            if role not in self.embeddings_store:
-                logger.warning(f"Knowledge base not loaded for role: {role}")
-                return []
-            
-            # Embed query
-            query_embedding = self.embedding_model.encode(query, convert_to_numpy=True)
-            
-            # Compute similarities
-            embeddings = self.embeddings_store[role]
-            chunks = self.chunks_store[role]
-            
-            similarities = cosine_similarity([query_embedding], embeddings)[0]
-            
-            # Get top-k results
-            top_indices = np.argsort(similarities)[::-1][:top_k]
-            
-            results = [
-                {
-                    "content": chunks[idx],
-                    "similarity_score": float(similarities[idx]),
-                    "rank": i + 1
-                }
-                for i, idx in enumerate(top_indices)
-                if similarities[idx] > 0.3  # Minimum similarity threshold
-            ]
-            
-            logger.info(f"Retrieved {len(results)} relevant chunks for query")
-            return results
-            
+            chunks = self._resume_to_chunks(resume_data)
+            if not chunks:
+                logger.warning(f"No resume chunks for session {session_id}")
+                return False
+
+            index, embeddings = self._build_faiss(chunks)
+            bm25 = self._build_bm25(chunks)
+
+            self._resume_idx[session_id] = {
+                "chunks": chunks,
+                "faiss": index,
+                "embeddings": embeddings,
+                "bm25": bm25,
+            }
+            logger.info(f"Resume index built for session {session_id}: {len(chunks)} chunks")
+            return True
         except Exception as e:
-            logger.error(f"Retrieval error: {str(e)}")
-            return []
-    
-    def _chunk_knowledge(self, content: str, role: str, chunk_size: int = 500, overlap: int = 100) -> List[str]:
+            logger.error(f"Error building resume index for {session_id}: {e}")
+            return False
+
+    def retrieve_hybrid(
+        self,
+        session_id: str,
+        role: str,
+        query: str,
+        top_k: int = 6,
+    ) -> List[Dict]:
         """
-        Split knowledge content into chunks
-        
-        Args:
-            content: Full knowledge content
-            role: Job role
-            chunk_size: Target chunk size in characters
-            overlap: Overlap between chunks
-            
-        Returns:
-            List of content chunks
+        Hybrid retrieval: 85% resume context + 15% role knowledge.
+
+        Returns list of dicts:
+          {"content": str, "score": float, "source": "resume"|"role"}
+        """
+        resume_results = self._retrieve_from_index(
+            self._resume_idx.get(session_id),
+            query,
+            top_k=max(1, round(top_k * RESUME_WEIGHT * 2)),
+        )
+        role_results = self._retrieve_from_index(
+            self._role_kb.get(role),
+            query,
+            top_k=max(1, round(top_k * ROLE_WEIGHT * 2)),
+        )
+
+        # Tag sources
+        for r in resume_results:
+            r["source"] = "resume"
+        for r in role_results:
+            r["source"] = "role"
+
+        # Merge with budget enforcement
+        n_resume = round(top_k * RESUME_WEIGHT)
+        n_role   = top_k - n_resume
+
+        merged = resume_results[:n_resume] + role_results[:n_role]
+        merged.sort(key=lambda x: x["score"], reverse=True)
+
+        logger.debug(
+            f"Hybrid retrieval: {len(merged)} chunks "
+            f"({len(resume_results[:n_resume])} resume + {len(role_results[:n_role])} role)"
+        )
+        return merged
+
+    # Backward-compat wrapper
+    def retrieve_context(self, role: str, query: str, top_k: int = 5) -> List[Dict]:
+        """Legacy method — retrieves from role KB only."""
+        return self._retrieve_from_index(
+            self._role_kb.get(role), query, top_k=top_k
+        )
+
+    # ──────────────────────────────────────────────────────────────────────────
+    # Internal Retrieval
+    # ──────────────────────────────────────────────────────────────────────────
+
+    def _retrieve_from_index(
+        self,
+        store: Optional[Dict],
+        query: str,
+        top_k: int = 5,
+    ) -> List[Dict]:
+        """Retrieve from a single {faiss, bm25, chunks} store using RRF fusion."""
+        if not store:
+            return []
+        try:
+            chunks = store["chunks"]
+            n = len(chunks)
+            if n == 0:
+                return []
+
+            # ── FAISS retrieval ──────────────────────────────────────────────
+            q_emb = self.embedding_model.encode([query], convert_to_numpy=True)
+            q_emb = q_emb / (np.linalg.norm(q_emb, axis=1, keepdims=True) + 1e-10)
+            faiss_k = min(top_k * 2, n)
+            distances, faiss_ids = store["faiss"].search(q_emb.astype("float32"), faiss_k)
+            # faiss inner-product gives cosine scores (index is normalised)
+            faiss_ranks = {int(idx): rank for rank, idx in enumerate(faiss_ids[0]) if idx >= 0}
+
+            # ── BM25 retrieval ───────────────────────────────────────────────
+            tokens = query.lower().split()
+            bm25_scores = store["bm25"].get_scores(tokens)
+            bm25_order = np.argsort(bm25_scores)[::-1]
+            bm25_ranks = {int(idx): rank for rank, idx in enumerate(bm25_order)}
+
+            # ── Reciprocal Rank Fusion ────────────────────────────────────────
+            rrf_scores: Dict[int, float] = {}
+            for idx in range(n):
+                r_faiss = faiss_ranks.get(idx, n)
+                r_bm25  = bm25_ranks.get(idx, n)
+                rrf_scores[idx] = (1 / (RRF_K + r_faiss)) + (1 / (RRF_K + r_bm25))
+
+            top_indices = sorted(rrf_scores, key=rrf_scores.get, reverse=True)[:top_k]
+
+            # ── Map cosine distances back for score ──────────────────────────
+            cos_map = {}
+            for dist, idx in zip(distances[0], faiss_ids[0]):
+                if idx >= 0:
+                    cos_map[int(idx)] = float(dist)
+
+            results = []
+            for rank, idx in enumerate(top_indices):
+                results.append({
+                    "content": chunks[idx],
+                    "score": rrf_scores[idx],
+                    "cosine_score": cos_map.get(idx, 0.0),
+                    "rank": rank + 1,
+                })
+            return results
+
+        except Exception as e:
+            logger.error(f"Retrieval error: {e}")
+            return []
+
+    # ──────────────────────────────────────────────────────────────────────────
+    # Index Building
+    # ──────────────────────────────────────────────────────────────────────────
+
+    def _build_faiss(self, chunks: List[str]) -> Tuple[faiss.Index, np.ndarray]:
+        """Build a normalised inner-product FAISS index (equivalent to cosine sim)."""
+        embeddings = self.embedding_model.encode(chunks, convert_to_numpy=True)
+        embeddings = embeddings / (
+            np.linalg.norm(embeddings, axis=1, keepdims=True) + 1e-10
+        )
+        dim = embeddings.shape[1]
+        index = faiss.IndexFlatIP(dim)
+        index.add(embeddings.astype("float32"))
+        return index, embeddings
+
+    def _build_bm25(self, chunks: List[str]) -> BM25Okapi:
+        tokenised = [chunk.lower().split() for chunk in chunks]
+        return BM25Okapi(tokenised)
+
+    # ──────────────────────────────────────────────────────────────────────────
+    # Chunking
+    # ──────────────────────────────────────────────────────────────────────────
+
+    def _chunk_text(self, text: str, chunk_size: int = 500) -> List[str]:
+        """Sentence-aware chunking for role knowledge."""
+        sentences = [s.strip() for s in text.split(".") if s.strip()]
+        chunks, current = [], ""
+        for sent in sentences:
+            candidate = (current + ". " + sent).lstrip(". ")
+            if len(candidate) <= chunk_size:
+                current = candidate
+            else:
+                if current:
+                    chunks.append(current + ".")
+                current = sent
+        if current:
+            chunks.append(current + ".")
+        return chunks
+
+    def _resume_to_chunks(self, resume_data: Dict) -> List[str]:
+        """
+        Convert structured resume into semantically meaningful chunks.
+        Each chunk represents one logical unit (a project, a skill group, an experience).
         """
         chunks = []
-        sentences = content.split('.')
-        
-        current_chunk = ""
-        for sentence in sentences:
-            sentence = sentence.strip()
-            if not sentence:
+
+        # Skills chunk
+        skills = resume_data.get("skills") or []
+        tools  = resume_data.get("tools")  or []
+        if skills:
+            chunks.append("Technical skills: " + ", ".join(skills))
+        if tools:
+            chunks.append("Tools and libraries: " + ", ".join(tools))
+
+        # Certifications
+        certs = resume_data.get("certifications") or []
+        if certs:
+            chunks.append("Certifications: " + "; ".join(certs))
+
+        # Projects — one chunk per project (rich context)
+        projects_raw = resume_data.get("projects") or {}
+        if isinstance(projects_raw, dict):
+            for name, details in projects_raw.items():
+                if not isinstance(details, dict):
+                    chunks.append(f"Project: {name}")
+                    continue
+                proj_skills = ", ".join(details.get("skills") or [])
+                proj_tools  = ", ".join(details.get("tools")  or [])
+                desc        = details.get("description") or ""
+                outcome     = details.get("outcome") or ""
+                parts = [f"Project '{name}'"]
+                if desc:
+                    parts.append(f"Description: {desc}")
+                if proj_skills:
+                    parts.append(f"Skills used: {proj_skills}")
+                if proj_tools:
+                    parts.append(f"Tools used: {proj_tools}")
+                if outcome:
+                    parts.append(f"Outcome: {outcome}")
+                chunks.append(". ".join(parts))
+        elif isinstance(projects_raw, list):
+            for p in projects_raw:
+                if isinstance(p, dict):
+                    name = p.get("name") or p.get("title") or "Project"
+                    proj_skills = ", ".join(p.get("skills") or [])
+                    proj_tools  = ", ".join(p.get("tools")  or [])
+                    desc        = p.get("description") or ""
+                    outcome     = p.get("outcome") or ""
+                    parts = [f"Project '{name}'"]
+                    if desc:
+                        parts.append(f"Description: {desc}")
+                    if proj_skills:
+                        parts.append(f"Skills used: {proj_skills}")
+                    if proj_tools:
+                        parts.append(f"Tools used: {proj_tools}")
+                    if outcome:
+                        parts.append(f"Outcome: {outcome}")
+                    chunks.append(". ".join(parts))
+                elif p:
+                    chunks.append(f"Project: {p}")
+
+        # Work experience — one chunk per role
+        for exp in (resume_data.get("experience") or []):
+            if not isinstance(exp, dict):
                 continue
-            
-            test_chunk = current_chunk + ". " + sentence if current_chunk else sentence
-            
-            if len(test_chunk) <= chunk_size:
-                current_chunk = test_chunk
-            else:
-                if current_chunk:
-                    chunks.append(current_chunk + ".")
-                current_chunk = sentence
-        
-        if current_chunk:
-            chunks.append(current_chunk + ".")
-        
-        logger.info(f"Created {len(chunks)} chunks for {role}")
-        return chunks
-    
-    def _generate_embeddings(self, chunks: List[str]) -> np.ndarray:
-        """
-        Generate embeddings for knowledge chunks
-        
-        Args:
-            chunks: List of text chunks
-            
-        Returns:
-            Numpy array of embeddings
-        """
-        logger.info(f"Generating embeddings for {len(chunks)} chunks...")
-        embeddings = self.embedding_model.encode(chunks, convert_to_numpy=True)
-        return embeddings
-    
-    # ============ Knowledge Base Sources ============
-    # These contain curated domain knowledge for each role
-    
-    def _get_backend_knowledge(self) -> str:
-        """Backend Engineering domain knowledge"""
+            exp_skills = ", ".join(exp.get("skills") or [])
+            parts = [
+                f"Work experience: {exp.get('role', '')} at {exp.get('company', '')}",
+                f"Duration: {exp.get('duration', 'N/A')}",
+            ]
+            if exp_skills:
+                parts.append(f"Skills applied: {exp_skills}")
+            chunks.append(". ".join(parts))
+
+        # Education
+        education = resume_data.get("education") or []
+        if education:
+            chunks.append("Education: " + "; ".join(education))
+
+        return [c for c in chunks if len(c) > 10]
+
+    # ──────────────────────────────────────────────────────────────────────────
+    # Role Knowledge Bases
+    # ──────────────────────────────────────────────────────────────────────────
+
+    def _kb_backend(self) -> str:
         return """
-        Backend Engineering encompasses server-side application development, API design, and system architecture.
-        
-        Core Concepts:
-        1. REST API Design: Design principles, HTTP methods, status codes, request/response handling.
-        2. Database Design: SQL, NoSQL, indexing, normalization, ACID properties, transactions.
-        3. System Design: Scalability, load balancing, caching, microservices, message queues.
-        4. Authentication & Security: JWT, OAuth, encryption, SQL injection prevention, CORS.
-        5. Performance Optimization: Query optimization, caching strategies, rate limiting, async programming.
-        6. Deployment: Docker, Kubernetes, CI/CD pipelines, monitoring, logging.
-        
-        Languages & Frameworks: Python (Django, FastAPI, Flask), Java (Spring), Node.js (Express), Go, Rust.
-        
-        Design Patterns: MVC, Repository Pattern, Factory Pattern, Observer Pattern, Singleton, Strategy.
-        
-        Database Technologies: PostgreSQL, MySQL, MongoDB, Redis, Elasticsearch, DynamoDB.
-        
-        Key Skills: 
-        - Building scalable REST APIs
-        - Database optimization and design
-        - Implementing authentication and authorization
-        - Understanding distributed systems
-        - Performance profiling and optimization
-        - Writing testable, maintainable code
-        
-        Interview Focus Areas:
-        - System design problems (designing a URL shortener, social media feed, etc.)
-        - API design decisions and trade-offs
-        - Database schema design and optimization
-        - Handling concurrent requests and race conditions
-        - Caching strategies and when to use them
-        - Error handling and retry logic
+        Backend Engineering: server-side development, API design, and system architecture.
+        Core concepts: REST API design with HTTP methods, status codes, authentication, versioning.
+        Database design: SQL normalization, indexing, ACID transactions, query optimization.
+        Authentication: JWT tokens, OAuth2 flows, session management, password hashing.
+        Performance: caching strategies with Redis, rate limiting, connection pooling.
+        Frameworks: FastAPI, Django, Flask for Python; Spring Boot for Java; Express for Node.js.
+        Design patterns: MVC, Repository, Factory, Observer, Singleton.
+        Databases: PostgreSQL, MySQL, SQLite, MongoDB, Redis.
+        Testing: unit tests with pytest, integration tests, API testing with Postman.
+        Deployment basics: environment variables, requirements files, basic Docker containers.
+        Version control: Git workflows, branching strategies, pull requests.
+        Error handling: try/except, logging, HTTP error responses, retry logic.
+        API documentation: Swagger/OpenAPI, writing clear endpoint descriptions.
         """
-    
-    def _get_aiml_knowledge(self) -> str:
-        """AI/ML Engineering domain knowledge"""
+
+    def _kb_aiml(self) -> str:
         return """
-        Artificial Intelligence and Machine Learning involves building intelligent systems using data.
-        
-        Core Concepts:
-        1. Machine Learning Fundamentals: Supervised learning, unsupervised learning, reinforcement learning.
-        2. Deep Learning: Neural networks, CNNs, RNNs, Transformers, attention mechanisms.
-        3. Natural Language Processing: Text preprocessing, embeddings, language models, fine-tuning.
-        4. Computer Vision: Image classification, object detection, segmentation, GANs.
-        5. Feature Engineering: Selection, transformation, encoding, dimensionality reduction.
-        6. Model Evaluation: Metrics (accuracy, precision, recall, F1), cross-validation, hyperparameter tuning.
-        7. Deployment: Model serving, inference optimization, A/B testing, monitoring model drift.
-        
-        Languages & Frameworks: Python (TensorFlow, PyTorch, Scikit-learn), Java (Deeplearning4j), Scala (Spark MLlib).
-        
-        Key Algorithms:
-        - Regression: Linear, Ridge, Lasso, Elastic Net
-        - Classification: Logistic Regression, SVM, Decision Trees, Random Forest, Gradient Boosting
-        - Clustering: K-means, Hierarchical, DBSCAN
-        - Deep Learning: CNN, RNN, LSTM, GRU, Transformers
-        
-        Interview Focus Areas:
-        - Understanding when to use which algorithm
-        - Feature engineering and selection
-        - Handling imbalanced datasets
-        - Model interpretation and explainability
-        - Handling overfitting and underfitting
-        - End-to-end ML pipeline design
-        - Optimization techniques and regularization
+        AI and Machine Learning: building intelligent systems with data.
+        Core ML concepts: supervised learning, unsupervised learning, classification, regression.
+        Model training: splitting data into train/validation/test sets, overfitting, underfitting.
+        Algorithms: linear regression, logistic regression, decision trees, random forests, gradient boosting.
+        Deep learning basics: neural network layers, activation functions, loss functions, optimizers.
+        NLP basics: tokenization, text preprocessing, embeddings, sentiment analysis.
+        Computer vision basics: image preprocessing, CNNs, classification, object detection.
+        Feature engineering: missing values, encoding categorical variables, normalization, scaling.
+        Model evaluation: accuracy, precision, recall, F1-score, confusion matrix, ROC-AUC.
+        Libraries: scikit-learn, TensorFlow, PyTorch, Keras, Pandas, NumPy, OpenCV.
+        APIs: Gemini API, OpenAI API, HuggingFace transformers.
+        Deployment basics: saving models with pickle/joblib, loading for inference, REST API wrapping.
+        Data handling: loading CSVs, handling imbalanced datasets, data augmentation basics.
         """
-    
-    def _get_fullstack_knowledge(self) -> str:
-        """Full Stack Engineering domain knowledge"""
+
+    def _kb_fullstack(self) -> str:
         return """
-        Full Stack Engineering combines frontend and backend development skills.
-        
-        Frontend Stack:
-        - React, Vue.js, Angular for UI development
-        - State management: Redux, Vuex, Context API
-        - Styling: CSS, SASS, Tailwind, Material UI
-        - Build tools: Webpack, Vite, Parcel
-        - Testing: Jest, React Testing Library, Cypress
-        
-        Backend Stack:
-        - Server frameworks: Node.js, Python, Java, Go
-        - RESTful API design and GraphQL
-        - Database design and optimization
-        - Authentication and authorization
-        - Caching and performance optimization
-        
-        DevOps & Deployment:
-        - Docker containerization
-        - CI/CD pipelines
-        - Cloud platforms: AWS, GCP, Azure
-        - Monitoring and logging
-        - Infrastructure as Code
-        
-        Key Skills:
-        - Understanding full application lifecycle
-        - Cross-stack debugging
-        - Performance optimization across layers
-        - Security throughout the stack
-        - Testing both frontend and backend
+        Full Stack Engineering: combining frontend and backend development.
+        Frontend: React component architecture, state management, hooks, routing with React Router.
+        CSS: Flexbox, Grid, responsive design, media queries, animations.
+        JavaScript: ES6+, async/await, fetch API, DOM manipulation, event handling.
+        Backend: REST API design, database integration, authentication with JWT.
+        State management: useState, useEffect, Context API, Redux basics.
+        Build tools: npm/yarn, Vite, Webpack, environment configuration.
+        Database integration: connecting frontend to backend APIs, handling loading/error states.
+        Deployment: serving static builds, environment variables, basic CI/CD.
+        Testing: Jest for unit tests, React Testing Library for component tests.
+        Version control: Git, GitHub, pull request workflows.
         """
-    
-    def _get_datascience_knowledge(self) -> str:
-        """Data Science domain knowledge"""
+
+    def _kb_datascience(self) -> str:
         return """
-        Data Science combines statistics, programming, and domain expertise to extract insights from data.
-        
-        Core Concepts:
-        1. Statistics: Probability, distributions, hypothesis testing, A/B testing, confidence intervals.
-        2. Data Analysis: Exploratory data analysis, data visualization, statistical inference.
-        3. Machine Learning: Supervised and unsupervised learning, model selection, validation.
-        4. Big Data: Distributed computing, Apache Spark, Hadoop, data warehousing.
-        5. Data Pipeline: ETL processes, data quality, data governance, data versioning.
-        
-        Tools & Technologies:
-        - Programming: Python, R, SQL
-        - Libraries: Pandas, NumPy, Scikit-learn, Matplotlib, Seaborn
-        - Big Data: Spark, Hadoop, Hive
-        - Databases: PostgreSQL, MongoDB, Hive, Redshift
-        - Visualization: Tableau, Power BI, D3.js
-        
-        Key Skills:
-        - Data cleaning and preprocessing
-        - Exploratory data analysis
-        - Feature engineering
-        - Statistical testing
-        - Building predictive models
-        - Communicating insights to stakeholders
-        - SQL and database querying
+        Data Science: extracting insights from data using statistics and machine learning.
+        Statistics: mean, median, variance, standard deviation, probability distributions.
+        Hypothesis testing: p-values, t-tests, chi-square tests, A/B testing basics.
+        Data analysis: exploratory data analysis, data cleaning, handling missing values.
+        Visualization: matplotlib, seaborn, plotly, choosing right chart types.
+        Python tools: Pandas for data manipulation, NumPy for numerical computing.
+        SQL: SELECT, JOIN, GROUP BY, window functions, subqueries.
+        Machine learning: model selection, cross-validation, hyperparameter tuning.
+        Big data basics: Spark overview, partitioning concepts.
+        BI tools: Tableau, Power BI, building dashboards, KPI tracking.
+        Data pipelines: ETL processes, data quality checks, scheduling.
+        Communication: presenting findings, executive summaries, storytelling with data.
         """
-    
-    def _get_devops_knowledge(self) -> str:
-        """DevOps Engineering domain knowledge"""
+
+    def _kb_devops(self) -> str:
         return """
-        DevOps Engineering focuses on automating, deploying, and maintaining applications.
-        
-        Core Concepts:
-        1. Infrastructure as Code: Terraform, CloudFormation, Ansible
-        2. Containerization: Docker, containerd, image optimization
-        3. Orchestration: Kubernetes, Docker Swarm, ECS
-        4. CI/CD: GitHub Actions, GitLab CI, Jenkins, CircleCI
-        5. Monitoring & Logging: Prometheus, Grafana, ELK Stack, DataDog
-        6. Cloud Platforms: AWS, GCP, Azure services and best practices
-        
-        Key Technologies:
-        - Docker and container best practices
-        - Kubernetes architecture and operations
-        - Terraform for infrastructure provisioning
-        - Monitoring and alerting systems
-        - Log aggregation and analysis
-        - Secrets management
-        
-        Key Skills:
-        - Automating deployment processes
-        - Managing cloud infrastructure
-        - Implementing monitoring and alerting
-        - Troubleshooting infrastructure issues
-        - Security and compliance
-        - Performance optimization
-        - Disaster recovery and backup strategies
+        DevOps Engineering: automating software delivery and infrastructure management.
+        Docker: writing Dockerfiles, building images, docker-compose for local development.
+        CI/CD: GitHub Actions workflows, automated testing pipelines, build triggers.
+        Linux basics: shell scripting, file permissions, process management, cron jobs.
+        Cloud basics: deploying to Render, Heroku, AWS EC2, GCP, environment configuration.
+        Version control: Git branching, tags, releases, code review workflows.
+        Infrastructure: environment management, secrets management, .env files.
+        Monitoring basics: logging, application health checks, uptime monitoring.
+        Deployment strategies: blue-green, rolling updates, rollback procedures.
+        Networking basics: DNS, HTTP/HTTPS, ports, load balancers at a conceptual level.
+        Security: API key management, HTTPS, basic firewall rules, vulnerability scanning.
         """
-    
-    def initialize(self):
-        """Initialize RAG system"""
-        logger.info("RAG Pipeline initialized")
+
+    def _kb_frontend(self) -> str:
+        return """
+        Frontend Development: building user-facing web interfaces.
+        HTML5: semantic elements, accessibility, ARIA attributes, SEO meta tags.
+        CSS: Flexbox layout, CSS Grid, custom properties, animations, transitions, media queries.
+        JavaScript: closures, promises, async/await, event loop, fetch API, DOM manipulation.
+        React: functional components, hooks (useState, useEffect, useContext), props, state.
+        Routing: React Router, dynamic routes, navigation guards, URL parameters.
+        State management: Context API, Redux basics, local vs global state decisions.
+        Performance: lazy loading, code splitting, image optimization, memoization.
+        Testing: Jest, React Testing Library, snapshot testing.
+        Build tools: Vite, Webpack, npm scripts, environment variables.
+        Responsive design: mobile-first approach, breakpoints, viewport units.
+        Accessibility: keyboard navigation, focus management, screen reader compatibility.
+        """
+
+    def _kb_data_analyst(self) -> str:
+        return """
+        Data Analysis: collecting, cleaning, and interpreting data for business decisions.
+        SQL: complex JOINs, CTEs, window functions (ROW_NUMBER, RANK, LAG/LEAD), subqueries.
+        Data cleaning: handling nulls, duplicates, data type conversions, outlier detection.
+        Statistical analysis: descriptive statistics, correlation analysis, trend identification.
+        Visualization: choosing bar vs line vs scatter charts, dashboard design principles.
+        Spreadsheets: pivot tables, VLOOKUP, INDEX/MATCH, conditional formatting.
+        Python for analysis: Pandas groupby, merge, pivot_table, matplotlib/seaborn plots.
+        BI tools: Tableau or Power BI — connecting data sources, building dashboards.
+        Business metrics: CAC, LTV, churn rate, conversion funnel, MRR, DAU/MAU.
+        A/B testing: defining control/treatment, statistical significance, interpreting results.
+        Communication: writing data stories, executive summaries, making recommendations.
+        Reporting: automated reports, scheduled queries, alerting on KPI thresholds.
+        """

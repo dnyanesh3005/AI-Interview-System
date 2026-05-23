@@ -27,7 +27,7 @@ This full-stack application implements:
 **Frontend:**
 - React 18 (UI framework)
 - React Router (Navigation)
-- Vite (Build tool)
+- Vite (Build tool) — env vars use `VITE_*` prefix via `import.meta.env`
 - CSS 3 (Styling)
 
 ### System Components
@@ -71,6 +71,7 @@ This full-stack application implements:
 │   ├── main.py                          # FastAPI application
 │   ├── requirements.txt                 # Python dependencies
 │   ├── .env.example                     # Environment template
+│   ├── .env                             # Active environment config
 │   ├── interview_system.db              # SQLite database (generated)
 │   ├── README.md                        # Backend documentation
 │   └── modules/
@@ -84,27 +85,25 @@ This full-stack application implements:
 ├── frontend/
 │   ├── package.json                     # Node dependencies
 │   ├── vite.config.js                   # Vite configuration
+│   ├── .env.local                       # Frontend env (VITE_API_URL)
 │   ├── index.html                       # HTML entry point
-│   ├── README.md                        # Frontend documentation
 │   └── src/
 │       ├── App.jsx                      # Main app component
 │       ├── App.css                      # Global styles
 │       ├── main.jsx                     # React entry point
-│       ├── components/
-│       │   ├── ResumeUpload.jsx         # Resume upload UI
-│       │   ├── ResumeUpload.css
-│       │   ├── RoleSelection.jsx        # Role selection UI
-│       │   ├── RoleSelection.css
-│       │   ├── InterviewFlow.jsx        # Interview UI
-│       │   ├── InterviewFlow.css
-│       │   ├── InterviewSummary.jsx     # Summary UI
-│       │   ├── InterviewSummary.css
-│       │   ├── SessionsList.jsx         # Sessions list UI
-│       │   ├── SessionsList.css
-│       │   ├── Navigation.jsx           # Navigation bar
-│       │   └── Navigation.css
-│       └── services/
-│           └── api.js                   # API client (optional)
+│       └── components/
+│           ├── ResumeUpload.jsx         # Resume upload UI
+│           ├── ResumeUpload.css
+│           ├── RoleSelection.jsx        # Role selection UI (fixed)
+│           ├── RoleSelection.css
+│           ├── InterviewFlow.jsx        # Interview UI (fixed)
+│           ├── InterviewFlow.css
+│           ├── InterviewSummary.jsx     # Summary UI (fixed)
+│           ├── InterviewSummary.css
+│           ├── SessionsList.jsx         # Sessions list UI (fixed)
+│           ├── SessionsList.css
+│           ├── Navigation.jsx           # Navigation bar
+│           └── Navigation.css
 │
 ├── README.md                            # This file
 └── SETUP.md                             # Detailed setup guide
@@ -161,9 +160,9 @@ This full-stack application implements:
    npm install
    ```
 
-3. **Create environment file**
+3. **Create environment file** (⚠️ must use `VITE_` prefix for Vite)
    ```bash
-   echo "REACT_APP_API_URL=http://localhost:8000/api" > .env.local
+   echo "VITE_API_URL=http://localhost:8000/api" > .env.local
    ```
 
 4. **Run development server**
@@ -191,20 +190,20 @@ Response: { success, data, extracted_fields }
 POST /api/select-role
 Select target job role
 Request: { role }
-Response: { success, knowledge_base_loaded }
+Response: { success, role, knowledge_base_loaded, message }
 ```
 
 ### Interview Management
 ```
 POST /api/start-interview
 Initialize interview session
-Request: resume_data
-Response: { session_id, question, question_number, total_questions }
+Request: resume_data (+ role field)
+Response: { success, session_id, question, question_number, total_questions }
 
 POST /api/submit-answer
 Submit answer and get next question
-Request: { session_id, question_id, answer }
-Response: { interview_complete, question } OR { success }
+Request: { session_id, question_id, answer, duration_seconds }
+Response: { interview_complete, question } OR { success, interview_complete: true }
 
 GET /api/interview-summary/{session_id}
 Get complete interview summary
@@ -228,7 +227,7 @@ Response: { sessions, count }
 ### Knowledge Ingestion
 - Role-specific curated knowledge bases
 - Semantic chunking (500 character chunks with 100 char overlap)
-- Embedding generation using sentence-transformers
+- Embedding generation using sentence-transformers (all-MiniLM-L6-v2)
 
 ### Retrieval Mechanism
 - Query construction from resume and role context
@@ -266,13 +265,13 @@ Response: { sessions, count }
    └─> Parse resume → Extract skills, experience, domain
 
 2. Role Selection
-   └─> Load knowledge base → Initialize RAG pipeline
+   └─> Select role card → Click "Start Interview" → Load KB → Initialize RAG
 
 3. Interview Start
-   └─> Generate Q1 → Create session → Store question
+   └─> Generate Q1 → Create session → Store question → Display immediately
 
 4. Question → Answer Loop (5 iterations)
-   ├─> Display question
+   ├─> Display question (passed directly from API response)
    ├─> Candidate provides answer
    ├─> Store answer
    ├─> Retrieve context → Generate next question
@@ -282,30 +281,13 @@ Response: { sessions, count }
    └─> Analyze responses → Generate summary → Display results
 ```
 
-## 🎨 Key Features
+## 🐛 Known Issues Fixed
 
-### Resume Parsing
-- Extracts: Name, email, phone, skills, experience, education, projects
-- Supports: PDF, TXT, DOCX formats
-- Uses regex patterns and domain knowledge
-
-### Adaptive Question Generation
-- Questions adapt to candidate's experience level
-- Different difficulty levels: Basic, Intermediate, Advanced
-- Variety of question types for comprehensive evaluation
-- Grounded in actual knowledge base content
-
-### Session Management
-- Unique session IDs for each interview
-- Real-time progress tracking
-- Complete Q&A history preservation
-- Performance metadata collection
-
-### Analytics & Reporting
-- Interview summary with all Q&A pairs
-- Performance analysis (knowledge depth, technical accuracy, etc.)
-- Recommendations for improvement
-- Downloadable summary reports
+| Issue | Root Cause | Fix Applied |
+|-------|-----------|------------|
+| Role selection didn't proceed | Card click called `onSelect` immediately, button double-called it → race condition | Separated card click (local state) from button (single API call) |
+| Interview screen blank (no question) | First question from `/api/start-interview` was discarded in App.jsx | Store `data.question` in state, pass as `initialQuestion` to `InterviewFlow` |
+| Env vars not resolving | Used `process.env.REACT_APP_*` (CRA syntax) in Vite project | Changed to `import.meta.env.VITE_*` across all components + `.env.local` |
 
 ## 🔒 Security Considerations
 
@@ -319,15 +301,12 @@ Response: { sessions, count }
 
 ### Backend Deployment
 ```bash
-# Using Heroku
-gunicorn main:app --workers 4 --timeout 60
+# Using Gunicorn
+gunicorn main:app --workers 4 --timeout 60 -k uvicorn.workers.UvicornWorker
 
 # Using Docker
 docker build -t ai-interview-backend .
 docker run -p 8000:8000 ai-interview-backend
-
-# Using Railway/Render
-Just push to git, they'll deploy automatically
 ```
 
 ### Frontend Deployment
@@ -379,37 +358,9 @@ curl -X POST http://localhost:8000/api/submit-answer \
   }'
 ```
 
-## 🐛 Troubleshooting
-
-### Common Issues
-
-**1. CORS Errors**
-```
-Solution: Update CORS_ORIGINS in backend .env
-CORS_ORIGINS=["http://localhost:3000", "http://localhost:5173"]
-```
-
-**2. Resume Parsing Fails**
-```
-Solution: Ensure file is valid PDF/TXT/DOCX
-Check file encoding for text files
-```
-
-**3. Questions Not Generating**
-```
-Solution: Ensure knowledge base loaded for role
-Check RAG pipeline initialization
-```
-
-**4. Database Locked**
-```
-Solution: Close other connections to SQLite
-Consider upgrading to PostgreSQL
-```
-
 ## 🎯 Future Enhancements
 
-- [ ] Integration with Claude API for natural question generation
+- [ ] Integration with Claude/OpenAI API for natural question generation
 - [ ] Real-time answer quality scoring using LLM
 - [ ] Video recording and speech-to-text
 - [ ] Multi-language support
@@ -427,30 +378,11 @@ Consider upgrading to PostgreSQL
 - [Sentence Transformers](https://www.sbert.net/)
 - [RAG Pattern](https://aws.amazon.com/blogs/machine-learning/rag-pattern-in-generative-ai/)
 - [SQLite Documentation](https://www.sqlite.org/docs.html)
+- [Vite Env Variables](https://vitejs.dev/guide/env-and-mode.html)
 
 ## 📄 License
 
 This project is part of the PG-AGI internship program.
-
-## 👥 Contributing
-
-For contributions, please follow these guidelines:
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Submit a pull request
-
-## 📞 Support
-
-For issues or questions:
-1. Check the troubleshooting section
-2. Review backend/README.md
-3. Check frontend components for usage examples
-4. Create an issue on GitHub
-
-## 🎥 Demo Video
-
-See the DEMO.md file for instructions on creating a demo video showcasing the system.
 
 ---
 

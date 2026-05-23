@@ -1,371 +1,489 @@
 """
-Question Generation Module
-Generates contextual interview questions using RAG
+Question Generator Module
+Generates resume-grounded interview questions with:
+  - Hybrid RAG context (FAISS + BM25)
+  - 6-category rotation (conceptual, project-based, debugging,
+    deployment, scenario-based, real-world)
+  - Cosine-similarity deduplication (threshold = 0.75)
+  - Resume grounding validation (hallucination rejection + content check)
+  - Difficulty capped at beginner → intermediate
 """
 
 import logging
-from typing import Dict, List, Optional
-import json
+import re
+from collections import deque
+from typing import Dict, List, Optional, Tuple
+
+import numpy as np
 
 logger = logging.getLogger(__name__)
 
+# ─── Category rotation ─────────────────────────────────────────────────────────
+CATEGORY_ROTATION = [
+    "conceptual",
+    "project-based",
+    "debugging",
+    "deployment",
+    "scenario-based",
+    "real-world",
+]
+
+# Deduplication threshold
+SIM_THRESHOLD = 0.75  # More aggressive deduplication
+
+# Max regeneration attempts before giving up
+MAX_RETRIES = 3
+
+
 class QuestionGenerator:
-    """Generate interview questions based on RAG context"""
-    
-    def __init__(self, rag_pipeline):
+    """
+    Generates personalized, resume-grounded interview questions.
+    Integrates LLMService (Gemini) + Hybrid RAG pipeline.
+    """
+
+    def __init__(self, rag_pipeline, llm_service=None):
         """
-        Initialize question generator
-        
         Args:
-            rag_pipeline: RAGPipeline instance for context retrieval
+            rag_pipeline: RAGPipeline instance (hybrid FAISS + BM25)
+            llm_service: LLMService instance (Gemini). If None, created lazily.
         """
-        self.rag_pipeline = rag_pipeline
-        
-        # Question templates categorized by difficulty and type
-        self.question_templates = {
-            "Conceptual": [
-                "Explain the key differences between {topic1} and {topic2}",
-                "What are the main advantages and disadvantages of using {topic}?",
-                "How does {concept} work in the context of {domain}?",
-                "What are the best practices for {topic}?",
-            ],
-            "Applied": [
-                "How would you implement {topic} in a real-world scenario?",
-                "Design a solution for {problem} using {technology}",
-                "Walk me through your approach to solving {problem}",
-                "What trade-offs would you consider when {action}?",
-            ],
-            "Challenge": [
-                "How would you optimize {system} for {constraint}?",
-                "What are the potential issues with {approach} and how would you mitigate them?",
-                "Given {constraints}, how would you design {system}?",
-                "What's a complex problem you'd solve using {skill}?",
-            ],
-            "Experience": [
-                "Tell me about your experience with {technology}",
-                "Describe a project where you used {skill}",
-                "What challenges did you face with {topic} and how did you overcome them?",
-                "How have you applied {concept} in your previous work?",
-            ]
+        self.rag = rag_pipeline
+        self._llm = llm_service  # injected or lazy
+
+        # Per-session in-memory state (supplements session_manager)
+        # key: session_id → {asked_embeddings, asked_texts, category_queue, covered}
+        self._session_state: Dict[str, Dict] = {}
+
+        logger.info("QuestionGenerator initialised")
+
+    # ──────────────────────────────────────────────────────────────────────────
+    # Public API
+    # ──────────────────────────────────────────────────────────────────────────
+
+    def init_session(self, session_id: str):
+        """Initialise per-session state. Call once when interview starts."""
+        self._session_state[session_id] = {
+            "asked_embeddings": [],   # List[np.ndarray]
+            "asked_texts": [],        # List[str]
+            "category_queue": deque(CATEGORY_ROTATION * 3),  # enough for 18 Qs
+            "covered_categories": [],
+            "covered_skills": set(),
         }
-        
-        logger.info("Question Generator initialized")
-    
+
     def generate_question(
         self,
         session_id: str,
         resume_data: Dict,
         question_number: int,
-        previous_context: Optional[Dict] = None
+        previous_context: Optional[Dict] = None,
     ) -> Dict:
         """
-        Generate an interview question based on resume and RAG context
-        
+        Generate a unique, resume-grounded interview question.
+
         Args:
             session_id: Interview session ID
-            resume_data: Extracted resume data
-            question_number: Question number in sequence
-            previous_context: Context from previous question/answer
-            
+            resume_data: Structured resume (from ResumeParser)
+            question_number: 1-indexed question number
+            previous_context: {"previous_question": str, "previous_answer": str}
+
         Returns:
-            Dictionary with generated question and metadata
+            Dict with question metadata
         """
-        try:
-            role = resume_data.get("role", "Backend Engineer")
-            skills = resume_data.get("skills", [])
-            domain = resume_data.get("domain", "General")
-            experience_years = resume_data.get("experience_years", 0)
-            
-            # Determine question difficulty based on experience
-            difficulty = self._determine_difficulty(experience_years, question_number)
-            
-            # Build retrieval query
-            query = self._build_query(
+        # Ensure session state exists
+        if session_id not in self._session_state:
+            self.init_session(session_id)
+
+        role = resume_data.get("role", "Backend Engineer")
+        state = self._session_state[session_id]
+        difficulty = self._difficulty(resume_data.get("experience_years", 0))
+
+        # Pick next category from rotation queue
+        category = self._next_category(state)
+
+        # Build retrieval query
+        query = self._build_query(resume_data, question_number, category, previous_context)
+
+        # Hybrid RAG retrieval
+        context_chunks = self.rag.retrieve_hybrid(
+            session_id=session_id,
+            role=role,
+            query=query,
+            top_k=6,
+        )
+
+        # Separate resume vs. role context
+        resume_ctx = [c["content"] for c in context_chunks if c.get("source") == "resume"]
+        role_ctx   = [c["content"] for c in context_chunks if c.get("source") == "role"]
+
+        # Generation + validation loop
+        question_text = None
+        for attempt in range(MAX_RETRIES):
+            candidate = self._call_llm(
                 role=role,
                 resume_data=resume_data,
-                question_number=question_number,
-                previous_context=previous_context
-            )
-            
-            # Retrieve relevant context from knowledge base
-            context_chunks = self.rag_pipeline.retrieve_context(role, query, top_k=3)
-            
-            # Select question type
-            question_type = self._select_question_type(
-                question_number=question_number,
-                experience_years=experience_years,
-                skills=skills
-            )
-            
-            # Generate question using context
-            question = self._create_question(
-                role=role,
-                question_type=question_type,
+                resume_context=resume_ctx,
+                rag_context=role_ctx,
                 difficulty=difficulty,
-                skills=skills,
-                domain=domain,
-                context_chunks=context_chunks,
-                previous_context=previous_context
+                category=category,
+                previous_context=previous_context,
+                state=state,
             )
-            
-            return {
-                "question_id": f"{session_id}_q{question_number}",
-                "question_number": question_number,
-                "question_text": question,
-                "question_type": question_type,
-                "difficulty": difficulty,
-                "category": self._categorize_question(question, role),
-                "context_used": [c.get("content", "")[:100] for c in context_chunks],
-                "expected_depth": self._get_expected_depth(difficulty, question_type)
-            }
-            
-        except Exception as e:
-            logger.error(f"Error generating question: {str(e)}")
-            # Return fallback question
-            return self._get_fallback_question(question_number)
-    
-    def _build_query(
+
+            if not candidate or len(candidate) < 15:
+                continue
+
+            # 1. Grounding validation — reject hallucinated tech
+            if not self._is_grounded(candidate, resume_data):
+                logger.warning(f"Attempt {attempt+1}: Question failed grounding — '{candidate[:60]}...'")
+                continue
+
+            # 2. Deduplication — reject if too similar to prior questions
+            if self._is_duplicate(candidate, state):
+                logger.warning(f"Attempt {attempt+1}: Question too similar to previous")
+                continue
+
+            # Passed both checks
+            question_text = candidate
+            break
+
+        # Absolute fallback
+        if not question_text:
+            question_text = self._fallback_question(resume_data, category, question_number)
+
+        # Update session state
+        self._update_state(state, question_text, category, resume_data)
+
+        return {
+            "question_id": f"{session_id}_q{question_number}",
+            "question_number": question_number,
+            "question_text": question_text,
+            "question_type": category,
+            "difficulty": difficulty,
+            "category": category,
+            "context_used": [c.get("content", "")[:80] for c in context_chunks],
+            "expected_depth": self._expected_depth(difficulty),
+        }
+
+    # ──────────────────────────────────────────────────────────────────────────
+    # LLM Integration
+    # ──────────────────────────────────────────────────────────────────────────
+
+    def _call_llm(
         self,
         role: str,
         resume_data: Dict,
-        question_number: int,
-        previous_context: Optional[Dict] = None
-    ) -> str:
-        """Build search query for RAG retrieval"""
-        
-        skills = ", ".join(resume_data.get("skills", [])[:3])
-        domain = resume_data.get("domain", "General")
-        
-        # Different queries based on question progression
-        if question_number == 1:
-            query = f"fundamental concepts in {role} with focus on {domain}"
-        elif question_number == 2:
-            query = f"practical applications of {skills} in {role}"
-        elif question_number == 3:
-            query = f"system design and architecture in {role}"
-        elif question_number == 4:
-            query = f"advanced topics and optimization in {role}"
-        else:
-            query = f"edge cases and problem-solving approaches in {role}"
-        
-        # Adapt query if there's previous context
-        if previous_context:
-            prev_answer = previous_context.get("previous_answer", "")
-            # Could enhance query based on previous answer quality
-            if len(prev_answer) < 50:
-                query += " detailed explanation required"
-        
-        return query
-    
-    def _determine_difficulty(self, experience_years: int, question_number: int) -> str:
-        """Determine question difficulty"""
-        
-        # Adapt difficulty based on experience and question progression
-        base_difficulty = {
-            0: "Basic",      # 0 years
-            1: "Intermediate",  # 1-2 years
-            2: "Intermediate",  # 2-5 years
-            3: "Advanced",      # 5+ years
-        }
-        
-        years_category = min(3, experience_years // 2)
-        base = base_difficulty.get(years_category, "Intermediate")
-        
-        # Increase difficulty with question progression
-        if question_number >= 4:
-            if base == "Basic":
-                base = "Intermediate"
-            elif base == "Intermediate":
-                base = "Advanced"
-        
-        return base
-    
-    def _select_question_type(
-        self,
-        question_number: int,
-        experience_years: int,
-        skills: List[str]
-    ) -> str:
-        """Select question type based on progression"""
-        
-        types_sequence = ["Conceptual", "Applied", "Challenge", "Experience", "Challenge"]
-        
-        # For experienced candidates, adjust sequence
-        if experience_years >= 5:
-            types_sequence = ["Applied", "Challenge", "Challenge", "Experience", "Challenge"]
-        elif experience_years >= 2:
-            types_sequence = ["Conceptual", "Applied", "Challenge", "Experience", "Challenge"]
-        
-        return types_sequence[min(question_number - 1, len(types_sequence) - 1)]
-    
-    def _create_question(
-        self,
-        role: str,
-        question_type: str,
+        resume_context: List[str],
+        rag_context: List[str],
         difficulty: str,
-        skills: List[str],
-        domain: str,
-        context_chunks: List[Dict],
-        previous_context: Optional[Dict] = None
+        category: str,
+        previous_context: Optional[Dict],
+        state: Dict,
     ) -> str:
-        """Create the actual question using context"""
-        
-        # Get template
-        template = self._select_template(question_type, difficulty, skills)
-        
-        # Extract key topics from context
-        topics = self._extract_topics(context_chunks, skills)
-        
-        # Fill template with extracted information
-        question = self._fill_template(template, topics, role, domain, skills)
-        
-        return question
-    
-    def _select_template(self, question_type: str, difficulty: str, skills: List[str]) -> str:
-        """Select appropriate template for question"""
-        
-        templates = {
-            "Conceptual": [
-                "Explain the key differences between {topic1} and {topic2} in {role}.",
-                "What are the main advantages of {topic} compared to traditional approaches?",
-                "How does {concept} contribute to building {system}?",
-                "What principles should guide {topic} in {role}?",
-            ],
-            "Applied": [
-                "How would you implement {topic} for a {scale} system?",
-                "Design an approach to solve {problem} using your {skill} expertise.",
-                "Walk us through your thought process for {task}.",
-                "What would be your practical approach to {problem}?",
-            ],
-            "Challenge": [
-                "How would you scale {system} when {constraint}?",
-                "What architectural changes would be needed if {scenario}?",
-                "Given these constraints {constraints}, how would you optimize {system}?",
-                "Design a system that handles {challenge} efficiently.",
-            ],
-            "Experience": [
-                "Tell me about a time you worked with {topic} - what did you learn?",
-                "Can you share an experience where you improved {system} using {skill}?",
-                "Describe a challenging project where you applied {concept}.",
-                "How have you used {skill} to solve real-world problems?",
-            ]
-        }
-        
-        q_templates = templates.get(question_type, templates["Applied"])
-        
-        # Select based on difficulty
-        if difficulty == "Basic":
-            return q_templates[0] if len(q_templates) > 0 else "Tell me about your experience with {topic}"
-        elif difficulty == "Advanced":
-            return q_templates[-1] if len(q_templates) > 0 else "How would you optimize {system}?"
-        else:
-            return q_templates[len(q_templates) // 2] if q_templates else "How would you implement {topic}?"
-    
-    def _extract_topics(self, context_chunks: List[Dict], skills: List[str]) -> Dict:
-        """Extract key topics from retrieved context"""
-        
-        topics = {
-            "topic": "your expertise",
-            "topic1": "first approach",
-            "topic2": "alternative approach",
-            "concept": "important concept",
-            "system": "system",
-            "problem": "challenge",
-            "task": "technical task",
-            "skill": skills[0] if skills else "technical skills",
-            "scenario": "a sudden traffic spike",
-            "constraint": "increased load",
-            "challenge": "scale",
-        }
-        
-        # Try to extract from context chunks
-        if context_chunks:
-            # Enhanced with actual context content
-            first_chunk = context_chunks[0].get("content", "").split(":")
-            if len(first_chunk) > 1:
-                topics["concept"] = first_chunk[0].strip()[:30]
-        
-        return topics
-    
-    def _fill_template(
-        self,
-        template: str,
-        topics: Dict,
-        role: str,
-        domain: str,
-        skills: List[str]
-    ) -> str:
-        """Fill template with actual content"""
-        
-        # Map placeholders
-        question = template
-        
-        for placeholder, value in topics.items():
-            question = question.replace("{" + placeholder + "}", str(value))
-        
-        question = question.replace("{role}", role)
-        question = question.replace("{domain}", domain)
-        question = question.replace("{scale}", "production")
-        
-        # Remove any remaining unreplaced placeholders
-        import re
-        question = re.sub(r'\{[^}]+\}', '', question)
-        
-        # Clean up question
-        question = question.strip()
-        if not question.endswith('?'):
-            question += '?'
-        
-        return question
-    
-    def _categorize_question(self, question: str, role: str) -> str:
-        """Categorize question based on content"""
-        
+        """Delegate to LLMService.generate_question()."""
+        llm = self._get_llm()
+        asked = state.get("asked_texts", [])
+        return llm.generate_question(
+            role=role,
+            resume_context=resume_context,
+            rag_context=rag_context,
+            difficulty=difficulty,
+            question_type=category,
+            skills=resume_data.get("skills", []),
+            domain=resume_data.get("domain", "General"),
+            previous_questions=asked[-5:] if asked else [],
+            resume_data=resume_data,
+        )
+
+    def _get_llm(self):
+        if self._llm is None:
+            from modules.llm_service import LLMService
+            self._llm = LLMService()
+        return self._llm
+
+    # ──────────────────────────────────────────────────────────────────────────
+    # Grounding Validation
+    # ──────────────────────────────────────────────────────────────────────────
+
+    def _is_grounded(self, question: str, resume_data: Dict) -> bool:
+        """
+        IMPROVED: Verify that question is actually about resume content.
+        Checks:
+        1. Mentions specific skills/projects/tools from resume
+        2. Doesn't use generic "your main project" without naming it
+        3. Doesn't introduce banned advanced topics
+        """
+        kg = resume_data.get("knowledge_graph") or {}
+        allowed = set(kg.get("all_allowed_tech") or [])
+
+        # Build comprehensive allowed set
+        skills = resume_data.get("skills") or []
+        tools = resume_data.get("tools") or []
+        allowed.update(s.lower() for s in skills)
+        allowed.update(t.lower() for t in tools)
+
+        # Add project names
+        projects = resume_data.get("projects") or {}
+        if isinstance(projects, dict):
+            allowed.update(p.lower() for p in projects.keys())
+
+        # Add company names
+        for exp in (resume_data.get("experience") or []):
+            if isinstance(exp, dict) and exp.get("company"):
+                allowed.add(exp.get("company").lower())
+
+        # Also add raw resume words
+        raw_text = (resume_data.get("raw_text") or "").lower()
+        raw_words = set(re.findall(r"\b[a-zA-Z][a-zA-Z0-9_\-.]{2,30}\b", raw_text))
+        allowed = allowed | raw_words
+
         q_lower = question.lower()
-        
-        if "design" in q_lower or "architecture" in q_lower:
-            return "System Design"
-        elif "explain" in q_lower or "understand" in q_lower:
-            return "Conceptual"
-        elif "implement" in q_lower or "code" in q_lower:
-            return "Implementation"
-        elif "optimize" in q_lower or "improve" in q_lower:
-            return "Optimization"
-        elif "challenge" in q_lower or "difficult" in q_lower:
-            return "Problem Solving"
-        else:
-            return "General Technical"
-    
-    def _get_expected_depth(self, difficulty: str, question_type: str) -> str:
-        """Get expected answer depth"""
-        
-        if difficulty == "Basic":
-            return "2-3 minutes, covering fundamentals"
-        elif difficulty == "Advanced":
-            return "5-10 minutes, deep technical insight expected"
-        else:
-            return "3-5 minutes, solid understanding required"
-    
-    def _get_fallback_question(self, question_number: int) -> Dict:
-        """Return fallback question if generation fails"""
-        
-        fallback_questions = [
-            "Tell us about your background and what interests you in this role.",
-            "What are your strongest technical skills and why?",
-            "Can you describe a complex technical problem you've solved?",
-            "How do you stay updated with new technologies in your field?",
-            "What's your approach to writing clean, maintainable code?",
-        ]
-        
-        q = fallback_questions[min(question_number - 1, len(fallback_questions) - 1)]
-        
-        return {
-            "question_id": f"fallback_q{question_number}",
-            "question_number": question_number,
-            "question_text": q,
-            "question_type": "Experience",
-            "difficulty": "Intermediate",
-            "category": "General",
-            "context_used": [],
-            "expected_depth": "3-5 minutes"
+
+        # ✓ NEW: Question must mention something from resume
+        resume_mentioned = False
+
+        # Check 1: Specific skill?
+        for skill in skills:
+            if skill.lower() in q_lower:
+                resume_mentioned = True
+                logger.debug(f"✓ Grounded: mentions skill '{skill}'")
+                break
+
+        # Check 2: Specific project?
+        if not resume_mentioned and isinstance(projects, dict):
+            for proj in projects.keys():
+                if proj.lower() in q_lower:
+                    resume_mentioned = True
+                    logger.debug(f"✓ Grounded: mentions project '{proj}'")
+                    break
+
+        # Check 3: Technology/tool?
+        if not resume_mentioned:
+            for tech in allowed:
+                if len(tech) > 2 and tech in q_lower:
+                    resume_mentioned = True
+                    logger.debug(f"✓ Grounded: mentions tech '{tech}'")
+                    break
+
+        # ✓ NEW: Reject generic "your project" without naming it
+        if "your project" in q_lower or "your main project" in q_lower:
+            if isinstance(projects, dict) and projects:
+                has_specific_name = any(
+                    proj.lower() in q_lower for proj in projects.keys()
+                )
+                if not has_specific_name:
+                    logger.debug("Grounding fail: Generic 'your project' without naming it")
+                    return False
+
+        if not resume_mentioned:
+            logger.debug(f"Grounding fail: Doesn't mention resume content")
+            return False
+
+        # ✓ EXISTING: Check banned advanced topics
+        banned_unless_in_resume = {
+            "kubernetes", "k8s", "terraform", "ansible", "kafka", "rabbitmq",
+            "microservices", "prometheus", "grafana", "mlflow", "kubeflow",
+            "sagemaker", "valgrind", "zookeeper", "consul",
         }
+
+        for banned in banned_unless_in_resume:
+            if banned in q_lower and banned not in allowed:
+                logger.debug(f"Grounding fail: '{banned}' not in resume")
+                return False
+
+        return True
+
+    # ──────────────────────────────────────────────────────────────────────────
+    # Deduplication
+    # ──────────────────────────────────────────────────────────────────────────
+
+    def _is_duplicate(self, question: str, state: Dict) -> bool:
+        """Return True if question is too similar to any previously asked question."""
+        embeddings = state.get("asked_embeddings", [])
+        if not embeddings:
+            return False
+
+        try:
+            from sentence_transformers import SentenceTransformer
+            # Use the same model as RAG pipeline
+            if not hasattr(self, "_embed_model"):
+                self._embed_model = SentenceTransformer("all-MiniLM-L6-v2")
+
+            q_emb = self._embed_model.encode([question], convert_to_numpy=True)
+            prev_embs = np.vstack(embeddings)
+
+            from sklearn.metrics.pairwise import cosine_similarity
+            sims = cosine_similarity(q_emb, prev_embs)[0]
+            if np.max(sims) >= SIM_THRESHOLD:
+                return True
+        except Exception as e:
+            logger.warning(f"Deduplication error (skipping check): {e}")
+
+        return False
+
+    # ──────────────────────────────────────────────────────────────────────────
+    # Session State Management
+    # ──────────────────────────────────────────────────────────────────────────
+
+    def _update_state(self, state: Dict, question: str, category: str, resume_data: Dict):
+        """Update in-memory session state after a question is accepted."""
+        state["asked_texts"].append(question)
+        state["covered_categories"].append(category)
+
+        # Store embedding for deduplication
+        try:
+            if not hasattr(self, "_embed_model"):
+                from sentence_transformers import SentenceTransformer
+                self._embed_model = SentenceTransformer("all-MiniLM-L6-v2")
+            emb = self._embed_model.encode([question], convert_to_numpy=True)
+            state["asked_embeddings"].append(emb)
+        except Exception as e:
+            logger.warning(f"Could not store question embedding: {e}")
+
+        # Mark skills covered
+        skills = resume_data.get("skills") or []
+        q_lower = question.lower()
+        for skill in skills:
+            if skill.lower() in q_lower:
+                state["covered_skills"].add(skill.lower())
+
+    def _next_category(self, state: Dict) -> str:
+        """Pop the next category from the rotation queue."""
+        q: deque = state.get("category_queue", deque(CATEGORY_ROTATION))
+        if q:
+            cat = q.popleft()
+            # Never repeat the immediately preceding category
+            if state["covered_categories"] and cat == state["covered_categories"][-1] and len(q) > 0:
+                q.append(cat)
+                cat = q.popleft()
+            return cat
+        return CATEGORY_ROTATION[len(state.get("covered_categories", [])) % len(CATEGORY_ROTATION)]
+
+    # ──────────────────────────────────────────────────────────────────────────
+    # Query Building
+    # ──────────────────────────────────────────────────────────────────────────
+
+    def _build_query(
+        self,
+        resume_data: Dict,
+        question_number: int,
+        category: str,
+        previous_context: Optional[Dict],
+    ) -> str:
+        """Build a semantically rich retrieval query."""
+        skills = (resume_data.get("skills") or [])[:3]
+        
+        projects_raw = resume_data.get("projects") or {}
+        if isinstance(projects_raw, dict):
+            projects_list = list(projects_raw.keys())
+        elif isinstance(projects_raw, list):
+            projects_list = []
+            for p in projects_raw:
+                if isinstance(p, dict):
+                    projects_list.append(p.get("name") or p.get("title") or str(p))
+                elif p:
+                    projects_list.append(str(p))
+        else:
+            projects_list = []
+        projects = projects_list[:2]
+        
+        role = resume_data.get("role", "software engineer")
+
+        skill_str   = ", ".join(skills)   if skills   else "technical skills"
+        project_str = ", ".join(projects) if projects else "projects"
+
+        category_queries = {
+            "conceptual":    f"fundamental concepts and theory behind {skill_str} in {role}",
+            "project-based": f"implementation details and challenges in projects: {project_str}",
+            "debugging":     f"debugging and troubleshooting errors in {skill_str} applications",
+            "deployment":    f"deploying and managing {skill_str} projects in production basics",
+            "scenario-based":f"real-world problem solving scenarios using {skill_str}",
+            "real-world":    f"practical industry applications of {skill_str} for {role}",
+        }
+
+        query = category_queries.get(category, f"{skill_str} {role}")
+
+        # Adapt if previous answer was very short (likely needs probing)
+        if previous_context and len(previous_context.get("previous_answer") or "") < 50:
+            query += " — follow-up clarification"
+
+        return query
+
+    # ──────────────────────────────────────────────────────────────────────────
+    # Difficulty & Fallback
+    # ──────────────────────────────────────────────────────────────────────────
+
+    def _difficulty(self, experience_years: int) -> str:
+        """Map experience years to difficulty level (capped at Intermediate)."""
+        if experience_years <= 0:
+            return "Basic"
+        elif experience_years <= 3:
+            return "Intermediate"
+        else:
+            return "Intermediate"  # Never generate Advanced as per requirement
+
+    def _expected_depth(self, difficulty: str) -> str:
+        return {
+            "Basic":        "2-3 minutes, focus on fundamentals",
+            "Intermediate": "3-5 minutes, demonstrate working knowledge",
+        }.get(difficulty, "3-5 minutes")
+
+    def _fallback_question(self, resume_data: Dict, category: str, question_number: int) -> str:
+        """
+        IMPROVED: Generate specific, resume-grounded fallback questions.
+        Uses actual project/skill names instead of generic "your main project".
+        """
+        skills = resume_data.get("skills") or []
+
+        projects_raw = resume_data.get("projects") or {}
+        projects = []
+        if isinstance(projects_raw, dict):
+            projects = list(projects_raw.keys())
+        elif isinstance(projects_raw, list):
+            projects = []
+            for p in projects_raw:
+                if isinstance(p, dict):
+                    projects.append(p.get("name") or p.get("title") or str(p))
+                elif p:
+                    projects.append(str(p))
+
+        # Validate they exist before using
+        if not skills and not projects:
+            return "Tell me about your technical experience and the key projects you're most proud of."
+
+        skill = skills[0] if skills else None
+        project = projects[0] if projects else None
+
+        fallbacks = {
+            "conceptual": (
+                f"Explain the core concepts of {skill} and how you applied it in {project}."
+                if skill and project else
+                f"Walk me through how {skill or 'your primary technology'} works."
+            ),
+            "project-based": (
+                f"Tell me about the technical architecture of {project}. What were the main components?"
+                if project else
+                f"Walk me through how you built one of your key projects."
+            ),
+            "debugging": (
+                f"Describe a challenging bug you encountered while building {project}."
+                if project else
+                f"Tell me about a bug you encountered in your work and how you fixed it."
+            ),
+            "deployment": (
+                f"How did you deploy {project} to make it accessible to users?"
+                if project else
+                f"Tell me about your experience deploying applications."
+            ),
+            "scenario-based": (
+                f"If you had to add a significant new feature to {project}, how would you approach it?"
+                if project else
+                f"How would you approach adding a new feature to one of your main projects?"
+            ),
+            "real-world": (
+                f"What lessons from building {project} would you apply to solve new problems?"
+                if project else
+                f"Tell me about applying your {skill} skills to solve a real-world problem."
+            ),
+        }
+
+        return fallbacks.get(category, f"Tell me about your experience with {skill}.")

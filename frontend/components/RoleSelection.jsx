@@ -3,6 +3,7 @@ import './RoleSelection.css';
 
 function RoleSelection({ onSelect, loading }) {
     const [selectedRole, setSelectedRole] = useState(null);
+    const [questionCount, setQuestionCount] = useState(5);
 
     const roles = [
         {
@@ -27,11 +28,25 @@ function RoleSelection({ onSelect, loading }) {
             skills: ['React', 'Node.js', 'Databases', 'APIs', 'DevOps']
         },
         {
+            id: 'frontend',
+            name: 'Frontend Developer',
+            description: 'UI/UX development, component structure, state, and web performance',
+            icon: '🎨',
+            skills: ['HTML5/CSS3', 'JavaScript ES6+', 'React', 'Vite', 'Performance']
+        },
+        {
             id: 'datascience',
             name: 'Data Scientist',
             description: 'Data analysis, statistical modeling, insights generation',
             icon: '📊',
             skills: ['Python', 'SQL', 'Statistics', 'Pandas', 'Visualization']
+        },
+        {
+            id: 'dataanalyst',
+            name: 'Data Analyst',
+            description: 'SQL queries, metrics dashboards, A/B tests, and business analysis',
+            icon: '📈',
+            skills: ['SQL', 'Excel/Sheets', 'Tableau/PowerBI', 'Pandas', 'KPIs']
         },
         {
             id: 'devops',
@@ -44,7 +59,12 @@ function RoleSelection({ onSelect, loading }) {
 
     const handleRoleSelect = (roleName) => {
         setSelectedRole(roleName);
-        onSelect(roleName);
+    };
+
+    const handleStartInterview = () => {
+        if (selectedRole && !loading) {
+            onSelect(selectedRole, questionCount);
+        }
     };
 
     return (
@@ -77,9 +97,25 @@ function RoleSelection({ onSelect, loading }) {
                     ))}
                 </div>
 
+                <div className="question-count-section">
+                    <h3>Number of Questions</h3>
+                    <div className="count-options">
+                        {[5, 10, 15].map(count => (
+                            <button
+                                key={count}
+                                type="button"
+                                className={`count-btn ${questionCount === count ? 'active' : ''}`}
+                                onClick={() => setQuestionCount(count)}
+                            >
+                                {count} Questions
+                            </button>
+                        ))}
+                    </div>
+                </div>
+
                 {selectedRole && (
                     <div className="role-info-box">
-                        <p>You selected <strong>{selectedRole}</strong></p>
+                        <p>You selected <strong>{selectedRole}</strong> with <strong>{questionCount} questions</strong></p>
                         <p className="text-muted">Customized questions will be generated based on this role and your resume</p>
                     </div>
                 )}
@@ -87,7 +123,7 @@ function RoleSelection({ onSelect, loading }) {
                 <button
                     className="continue-button"
                     disabled={!selectedRole || loading}
-                    onClick={() => selectedRole && handleRoleSelect(selectedRole)}
+                    onClick={handleStartInterview}
                 >
                     {loading ? 'Starting Interview...' : 'Start Interview'}
                 </button>
