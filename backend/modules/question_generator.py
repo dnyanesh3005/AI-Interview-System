@@ -4,8 +4,8 @@ Generates resume-grounded interview questions with:
   - Hybrid RAG context (FAISS + BM25)
   - 6-category rotation (conceptual, project-based, debugging,
     deployment, scenario-based, real-world)
-  - Cosine-similarity deduplication (threshold = 0.85)
-  - Resume grounding validation (hallucination rejection)
+  - Cosine-similarity deduplication (threshold = 0.75)
+  - Resume grounding validation (hallucination rejection + content check)
   - Difficulty capped at beginner → intermediate
 """
 
@@ -29,7 +29,7 @@ CATEGORY_ROTATION = [
 ]
 
 # Deduplication threshold
-SIM_THRESHOLD = 0.85
+SIM_THRESHOLD = 0.75  # More aggressive deduplication
 
 # Max regeneration attempts before giving up
 MAX_RETRIES = 3
@@ -206,25 +206,85 @@ class QuestionGenerator:
 
     def _is_grounded(self, question: str, resume_data: Dict) -> bool:
         """
-        Verify that all specific technology tokens in the question
-        are present in the candidate's resume (allowed tech set).
+        IMPROVED: Verify that question is actually about resume content.
+        Checks:
+        1. Mentions specific skills/projects/tools from resume
+        2. Doesn't use generic "your main project" without naming it
+        3. Doesn't introduce banned advanced topics
         """
         kg = resume_data.get("knowledge_graph") or {}
         allowed = set(kg.get("all_allowed_tech") or [])
 
-        # Also add raw resume words as a lenient guard
+        # Build comprehensive allowed set
+        skills = resume_data.get("skills") or []
+        tools = resume_data.get("tools") or []
+        allowed.update(s.lower() for s in skills)
+        allowed.update(t.lower() for t in tools)
+
+        # Add project names
+        projects = resume_data.get("projects") or {}
+        if isinstance(projects, dict):
+            allowed.update(p.lower() for p in projects.keys())
+
+        # Add company names
+        for exp in (resume_data.get("experience") or []):
+            if isinstance(exp, dict) and exp.get("company"):
+                allowed.add(exp.get("company").lower())
+
+        # Also add raw resume words
         raw_text = (resume_data.get("raw_text") or "").lower()
-        raw_words = set(re.findall(r"\b[a-zA-Z][a-zA-Z0-9_\-\.]{2,30}\b", raw_text))
+        raw_words = set(re.findall(r"\b[a-zA-Z][a-zA-Z0-9_\-.]{2,30}\b", raw_text))
         allowed = allowed | raw_words
 
-        # Known advanced/hallucinated topics that must NOT appear unless in resume
+        q_lower = question.lower()
+
+        # ✓ NEW: Question must mention something from resume
+        resume_mentioned = False
+
+        # Check 1: Specific skill?
+        for skill in skills:
+            if skill.lower() in q_lower:
+                resume_mentioned = True
+                logger.debug(f"✓ Grounded: mentions skill '{skill}'")
+                break
+
+        # Check 2: Specific project?
+        if not resume_mentioned and isinstance(projects, dict):
+            for proj in projects.keys():
+                if proj.lower() in q_lower:
+                    resume_mentioned = True
+                    logger.debug(f"✓ Grounded: mentions project '{proj}'")
+                    break
+
+        # Check 3: Technology/tool?
+        if not resume_mentioned:
+            for tech in allowed:
+                if len(tech) > 2 and tech in q_lower:
+                    resume_mentioned = True
+                    logger.debug(f"✓ Grounded: mentions tech '{tech}'")
+                    break
+
+        # ✓ NEW: Reject generic "your project" without naming it
+        if "your project" in q_lower or "your main project" in q_lower:
+            if isinstance(projects, dict) and projects:
+                has_specific_name = any(
+                    proj.lower() in q_lower for proj in projects.keys()
+                )
+                if not has_specific_name:
+                    logger.debug("Grounding fail: Generic 'your project' without naming it")
+                    return False
+
+        if not resume_mentioned:
+            logger.debug(f"Grounding fail: Doesn't mention resume content")
+            return False
+
+        # ✓ EXISTING: Check banned advanced topics
         banned_unless_in_resume = {
             "kubernetes", "k8s", "terraform", "ansible", "kafka", "rabbitmq",
             "microservices", "prometheus", "grafana", "mlflow", "kubeflow",
             "sagemaker", "valgrind", "zookeeper", "consul",
         }
 
-        q_lower = question.lower()
         for banned in banned_unless_in_resume:
             if banned in q_lower and banned not in allowed:
                 logger.debug(f"Grounding fail: '{banned}' not in resume")
@@ -368,10 +428,14 @@ class QuestionGenerator:
         }.get(difficulty, "3-5 minutes")
 
     def _fallback_question(self, resume_data: Dict, category: str, question_number: int) -> str:
-        """Generate a simple resume-grounded fallback if LLM fails."""
-        skills   = resume_data.get("skills") or []
-        
+        """
+        IMPROVED: Generate specific, resume-grounded fallback questions.
+        Uses actual project/skill names instead of generic "your main project".
+        """
+        skills = resume_data.get("skills") or []
+
         projects_raw = resume_data.get("projects") or {}
+        projects = []
         if isinstance(projects_raw, dict):
             projects = list(projects_raw.keys())
         elif isinstance(projects_raw, list):
@@ -381,18 +445,45 @@ class QuestionGenerator:
                     projects.append(p.get("name") or p.get("title") or str(p))
                 elif p:
                     projects.append(str(p))
-        else:
-            projects = []
 
-        skill   = skills[0]   if skills   else "your primary technology"
-        project = projects[0] if projects else "your main project"
+        # Validate they exist before using
+        if not skills and not projects:
+            return "Tell me about your technical experience and the key projects you're most proud of."
+
+        skill = skills[0] if skills else None
+        project = projects[0] if projects else None
 
         fallbacks = {
-            "conceptual":    f"Can you explain how {skill} works and why you chose to use it?",
-            "project-based": f"Walk me through how you built {project}. What were the key features?",
-            "debugging":     f"Describe a bug you encountered in {project} and how you fixed it.",
-            "deployment":    f"How did you run or deploy {project} so others could use it?",
-            "scenario-based":f"If you had to add a new feature to {project}, how would you approach it?",
-            "real-world":    f"How would you use {skill} to solve a real-world problem?",
+            "conceptual": (
+                f"Explain the core concepts of {skill} and how you applied it in {project}."
+                if skill and project else
+                f"Walk me through how {skill or 'your primary technology'} works."
+            ),
+            "project-based": (
+                f"Tell me about the technical architecture of {project}. What were the main components?"
+                if project else
+                f"Walk me through how you built one of your key projects."
+            ),
+            "debugging": (
+                f"Describe a challenging bug you encountered while building {project}."
+                if project else
+                f"Tell me about a bug you encountered in your work and how you fixed it."
+            ),
+            "deployment": (
+                f"How did you deploy {project} to make it accessible to users?"
+                if project else
+                f"Tell me about your experience deploying applications."
+            ),
+            "scenario-based": (
+                f"If you had to add a significant new feature to {project}, how would you approach it?"
+                if project else
+                f"How would you approach adding a new feature to one of your main projects?"
+            ),
+            "real-world": (
+                f"What lessons from building {project} would you apply to solve new problems?"
+                if project else
+                f"Tell me about applying your {skill} skills to solve a real-world problem."
+            ),
         }
+
         return fallbacks.get(category, f"Tell me about your experience with {skill}.")

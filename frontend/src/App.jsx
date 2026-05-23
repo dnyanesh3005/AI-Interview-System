@@ -49,35 +49,56 @@ function App() {
             return next;
         });
     };
-    const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000/api';
+    const API_BASE_URL = import.meta.env.VITE_API_URL || '/api';
+    const HEALTH_URL = '/health';
 
     const showToast = (message, type = 'success') => {
         setToast({ message, type });
         setTimeout(() => setToast(null), 4000);
     };
 
+    // Poll backend health until it's ready (handles slow startup)
+    const waitForBackend = async (maxWaitMs = 30000) => {
+        const start = Date.now();
+        while (Date.now() - start < maxWaitMs) {
+            try {
+                const res = await fetch(HEALTH_URL);
+                if (res.ok) return true;
+            } catch (_) {}
+            await new Promise(r => setTimeout(r, 1500));
+        }
+        return false;
+    };
+
     useEffect(() => {
         if (token) {
-            // Check if API is available
-            fetch(`${API_BASE_URL.replace('/api', '')}/health`)
-                .catch(err => {
-                    console.warn('Backend not available yet.');
-                });
+            fetch(HEALTH_URL).catch(() => {
+                console.warn('Backend not available yet.');
+            });
         }
     }, [token]);
 
     const handleResumeUpload = async (file) => {
         setLoading(true);
-        setLoadingMessage('Uploading your resume...');
+        setLoadingMessage('Connecting to backend...');
         setError(null);
 
-        const messageIntervals = [
-            setTimeout(() => setLoadingMessage('Extracting sections and parsing text...'), 600),
-            setTimeout(() => setLoadingMessage('Analyzing candidate skills using AI models...'), 1400),
-            setTimeout(() => setLoadingMessage('Structuring candidate profile...'), 2400)
-        ];
+        const messageIntervals = [];
 
         try {
+            // Wait for backend to be ready (handles cold-start delay)
+            const ready = await waitForBackend(20000);
+            if (!ready) {
+                throw new Error('Backend is not responding. Make sure python main.py is running.');
+            }
+
+            setLoadingMessage('Uploading your resume...');
+            messageIntervals.push(
+                setTimeout(() => setLoadingMessage('Extracting sections and parsing text...'), 600),
+                setTimeout(() => setLoadingMessage('Analyzing candidate skills using AI models...'), 1400),
+                setTimeout(() => setLoadingMessage('Structuring candidate profile...'), 2400)
+            );
+
             const formData = new FormData();
             formData.append('file', file);
 
@@ -106,8 +127,9 @@ function App() {
             setCurrentStep('role-selection');
             showToast('Resume parsed successfully!', 'success');
         } catch (err) {
-            setError(err.message || 'Error uploading resume. Make sure backend is running.');
-            showToast(err.message || 'Error uploading resume', 'error');
+            const msg = err.message || 'Error uploading resume. Make sure backend is running.';
+            setError(msg);
+            showToast(msg, 'error');
             console.error('Resume upload error:', err);
         } finally {
             messageIntervals.forEach(clearTimeout);
@@ -119,7 +141,7 @@ function App() {
         setTotalQuestions(totalQuestions);
         setLoading(true);
         setLoadingMessage('Selecting target role...');
-        setError(null);
+        setError(null); // clear any stale errors from previous step
 
         let intervals = [];
 

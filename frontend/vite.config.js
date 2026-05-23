@@ -7,7 +7,20 @@ export default defineConfig({
     server: {
         port: 5173,
         host: '0.0.0.0',
-        strictPort: false
+        strictPort: false,
+        proxy: {
+            // Forward /api/* and /health to the FastAPI backend
+            '/api': {
+                target: 'http://127.0.0.1:8000',
+                changeOrigin: true,
+                secure: false,
+            },
+            '/health': {
+                target: 'http://127.0.0.1:8000',
+                changeOrigin: true,
+                secure: false,
+            },
+        },
     },
     build: {
         outDir: 'dist',

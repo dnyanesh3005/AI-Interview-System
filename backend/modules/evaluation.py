@@ -190,9 +190,8 @@ class CandidateEvaluator:
     ) -> Optional[Dict]:
         """Call Gemini to generate a structured evaluation report."""
         try:
-            import google.generativeai as genai
-            genai.configure(api_key=self._gemini_key)
-            model = genai.GenerativeModel("gemini-1.5-flash")
+            from google import genai
+            client = genai.Client(api_key=self._gemini_key)
 
             # Build transcript
             transcript_lines = []
@@ -232,7 +231,10 @@ class CandidateEvaluator:
                 transcript="\n".join(transcript_lines)[:6000],
             )
 
-            response = model.generate_content(prompt)
+            response = client.models.generate_content(
+                model="gemini-2.5-flash",
+                contents=prompt,
+            )
             text = response.text.strip()
             text = re.sub(r"^```(?:json)?\s*", "", text)
             text = re.sub(r"\s*```$", "", text)

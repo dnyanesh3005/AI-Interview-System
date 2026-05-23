@@ -19,14 +19,13 @@ except ImportError:
 logger = logging.getLogger(__name__)
 
 # ─── Gemini client (lazy import) ───────────────────────────────────────────────
-def _get_gemini_model():
+def _get_gemini_client():
     try:
-        import google.generativeai as genai
+        from google import genai
         api_key = os.getenv("GEMINI_API_KEY")
         if not api_key:
             return None
-        genai.configure(api_key=api_key)
-        return genai.GenerativeModel("gemini-1.5-flash")
+        return genai.Client(api_key=api_key)
     except Exception:
         return None
 
@@ -67,7 +66,16 @@ IMPORTANT RULES:
 - Extract ONLY what is explicitly stated in the resume
 - Do NOT invent or infer technologies not mentioned
 - For projects: list only technologies directly connected to THAT specific project
-- Ignore leadership, NSS, extracurricular, hobbies sections entirely
+- ✓ CRITICAL: SKIP these sections ENTIRELY:
+  * Volunteer work, community service, NSS (National Service Scheme)
+  * Leadership roles, club positions, awards, recognitions
+  * Extracurricular activities, hobbies, interests
+  * Teaching, tutoring (unless explicitly about technical content)
+  * Hackathon judging, conference organizing
+- ✓ CRITICAL: Only extract projects that have at least ONE associated technology/tool
+  * If a project has no skills/tools mentioned, DO NOT include it
+  * Example: "Led a volunteer cleanup drive" → SKIP (no tech)
+  * Example: "Built REST API with FastAPI and PostgreSQL" → INCLUDE (has tech)
 - experience_years: count from earliest work/internship start year to present; 0 if no experience
 
 Resume Text:
@@ -129,7 +137,12 @@ class ResumeParser:
             logger.warning("Gemini unavailable — using regex fallback parser")
             structured = self._regex_extract(raw_text)
 
-        # 3. Always enrich with domain detection + knowledge graph
+        # 3. Filter out extracurricular projects (CRITICAL FIX)
+        structured["projects"] = self._filter_extracurricular_projects(
+            structured.get("projects", {})
+        )
+
+        # 4. Always enrich with domain detection + knowledge graph
         structured["domain"] = self._detect_domain(raw_text)
         structured["knowledge_graph"] = self._build_knowledge_graph(structured)
         structured["raw_text"] = raw_text
@@ -145,13 +158,16 @@ class ResumeParser:
 
     def _gemini_extract(self, raw_text: str) -> Optional[Dict]:
         """Use Gemini to extract structured JSON from resume text."""
-        model = _get_gemini_model()
-        if not model:
+        client = _get_gemini_client()
+        if not client:
             return None
 
         try:
             prompt = _EXTRACTION_PROMPT.format(resume_text=raw_text[:8000])
-            response = model.generate_content(prompt)
+            response = client.models.generate_content(
+                model="gemini-2.5-flash",
+                contents=prompt,
+            )
             text = response.text.strip()
 
             # Strip markdown code fences if present
@@ -302,6 +318,12 @@ class ResumeParser:
             # Extract skills mentioned in this project block
             block_lower = item.lower()
             proj_skills = [s.title() for s in skill_words if s in block_lower]
+
+            # Only add if it has technical skills
+            if not proj_skills:
+                logger.debug(f"Filtering: Project '{name}' has no technical skills")
+                continue
+
             projects[name] = {
                 "description": item[:200],
                 "skills": proj_skills,
@@ -309,6 +331,75 @@ class ResumeParser:
                 "outcome": "",
             }
         return projects
+
+    # ─── NEW: Extracurricular Filtering ────────────────────────────────────────
+
+    def _is_extracurricular_project(self, project_name: str) -> bool:
+        """
+        Check if a project name matches extracurricular activity patterns.
+        Returns True if it's likely not a technical project.
+        """
+        extracurricular_patterns = {
+            r"volunteer",
+            r"nss|national service",
+            r"community\s+service",
+            r"leadership\s+(?:role|position)",
+            r"(?:student\s+)?leadership.*(?:award|recognition)",
+            r"hackathon\s+(?:judge|organizer)",
+            r"conference\s+organiz",
+            r"teaching|tutor(?:ing)?",
+            r"freelance.*writ",  # freelance writing
+            r"sports|athletics|games",
+            r"award|achievement|recognition",
+            r"president\s+(?:of|club|society)",
+            r"cultural\s+event",
+            r"debate.*club",
+        }
+
+        name_lower = project_name.lower()
+        for pattern in extracurricular_patterns:
+            if re.search(pattern, name_lower, re.IGNORECASE):
+                return True
+        return False
+
+    def _filter_extracurricular_projects(self, projects: Dict) -> Dict:
+        """
+        Remove projects that are likely extracurricular, not technical.
+        Only keeps technical projects with skills/tools.
+        """
+        filtered = {}
+
+        for name, details in projects.items():
+            # Check 1: Is the project name extracurricular?
+            if self._is_extracurricular_project(name):
+                logger.debug(f"Filtering: Extracurricular project '{name}'")
+                continue
+
+            # Check 2: Does it have technical skills/tools?
+            skills = details.get("skills") or []
+            tools = details.get("tools") or []
+
+            if not skills and not tools:
+                logger.debug(f"Filtering: Project '{name}' has no technical skills")
+                continue
+
+            # Check 3: Does description mention extracurricular keywords?
+            description = (details.get("description") or "").lower()
+            extracurricular_keywords = {
+                "volunteer", "nss", "community", "leadership", "president",
+                "awards", "teaching", "tutor", "hackathon judge",
+            }
+
+            if any(kw in description for kw in extracurricular_keywords):
+                # Only skip if no skills are mentioned
+                if not skills:
+                    logger.debug(f"Filtering: '{name}' is likely extracurricular")
+                    continue
+
+            # Passed all checks — keep this project
+            filtered[name] = details
+
+        return filtered
 
     # ─── Knowledge Graph ───────────────────────────────────────────────────────
 

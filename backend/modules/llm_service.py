@@ -126,11 +126,22 @@ class LLMService:
 
     def _call_gemini(self, prompt: str) -> Optional[str]:
         try:
-            import google.generativeai as genai
-            genai.configure(api_key=self.gemini_key)
-            model = genai.GenerativeModel("gemini-1.5-flash")
-            response = model.generate_content(prompt)
+            from google import genai
+            client = genai.Client(api_key=self.gemini_key)
+            response = client.models.generate_content(
+                model="gemini-2.5-flash",
+                contents=prompt,
+            )
             text = response.text.strip()
+
+            # Safety net: extract first sentence only, cap at 200 chars
+            first_sentence = re.split(r'(?<=[?])\s', text)[0].strip()
+            if not first_sentence.endswith("?"):
+                # Try to find first question sentence
+                match = re.search(r'[^.!]*\?', text)
+                first_sentence = match.group(0).strip() if match else text[:200]
+            text = first_sentence[:220]  # hard cap
+
             logger.info("Question generated via Gemini")
             return text
         except Exception as e:
@@ -263,13 +274,20 @@ STRICT GROUNDING RULES (read carefully):
 1. Generate EXACTLY ONE question — no preamble, no explanation, just the question.
 2. Ground the question 85% in the candidate's ACTUAL resume content (projects, skills, experience).
 3. Use role/domain knowledge (15%) only to add context or industry framing.
-4. ONLY mention technologies in this whitelist: {allowed_tech_str}
-5. NEVER introduce technologies, architectures, or tools not in the whitelist.
-6. NEVER mix technologies across unrelated projects.
-7. Do NOT use phrases like "Based on your resume...", "I see that...", "I notice...".
-8. Do NOT generate senior/enterprise-level questions.
-9. Difficulty: {difficulty} — keep it beginner to intermediate.
-10. Question category (focus on this type): {question_type}
+4. WHITELIST: Only mention technologies from this list: {allowed_tech_str}
+5. DO NOT generate questions about:
+   - Generic skills without mentioning THEIR specific skills
+   - "Your main project" without naming it — use SPECIFIC project names below
+   - Extracurricular activities (volunteer, NSS, awards, leadership)
+   - Technologies not explicitly in the whitelist
+6. NEVER introduce technologies, architectures, or tools not in the whitelist.
+7. NEVER mix technologies across unrelated projects.
+8. Do NOT use phrases like "Based on your resume...", "I see that...", "I notice...".
+9. Do NOT generate senior/enterprise-level questions.
+10. Difficulty: INTERMEDIATE — practical, hands-on understanding only. No advanced theory.
+11. Question category (focus on this type): {question_type}
+12. ✓ REQUIRED: Your question MUST mention at least one: skill, project name, tool, or company from resume
+13. LENGTH: The question MUST be ONE short sentence, maximum 25 words. No multi-part questions. No "and also" or "additionally".
 
 {disallowed_block}
 
@@ -297,7 +315,16 @@ Previously Asked Questions (do NOT repeat or closely resemble these):
 {prev_qs}
 
 ══════════════════════════════════════════
-Generate the question now (output ONLY the question, ending with ?):
+VERIFICATION CHECKLIST:
+  ✓ Question mentions at least one actual skill, project, tool, or company from resume
+  ✓ Question is NOT answerable by someone without this candidate's resume
+  ✓ Question ends with a question mark
+  ✓ NO generic "your project" without naming it
+  ✓ NO extracurricular activities mentioned
+  ✓ Question is ONE sentence, under 25 words
+  ✓ Difficulty is INTERMEDIATE — not too easy, not expert-level
+
+Generate the question now (output ONLY the short single-sentence question, ending with ?):
 """
 
     # ──────────────────────────────────────────────────────────────────────────
