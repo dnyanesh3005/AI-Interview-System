@@ -1,14 +1,15 @@
 .navigation {
-    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    background: #200c3b;
     color: white;
     padding: 1rem 2rem;
     display: flex;
     justify-content: space-between;
     align-items: center;
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
     position: sticky;
     top: 0;
     z-index: 100;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
 }
 
 .nav-left {
@@ -36,7 +37,11 @@
 
 .logo-text {
     text-transform: uppercase;
-    letter-spacing: 0.5px;
+    letter-spacing: 1px;
+    font-weight: 800;
+    background: linear-gradient(135deg, #a78bfa, #818cf8);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
 }
 
 .nav-center {
@@ -166,20 +171,21 @@
 }
 
 .new-session-btn {
-    background-color: white;
-    color: #667eea;
-    padding: 0.5rem 1rem;
+    background: linear-gradient(135deg, #6d3fc4 0%, #522fa3 100%);
+    color: white;
+    padding: 0.55rem 1.2rem;
     border-radius: 0.5rem;
     border: none;
     font-weight: 600;
     cursor: pointer;
     transition: all 0.3s ease;
+    box-shadow: 0 4px 12px rgba(109, 63, 196, 0.3);
 }
 
 .new-session-btn:hover {
-    background-color: #f9fafb;
+    background: linear-gradient(135deg, #7e4fe3 0%, #633bb8 100%);
     transform: translateY(-2px);
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+    box-shadow: 0 6px 16px rgba(109, 63, 196, 0.5);
 }
 
 @media (max-width: 768px) {

@@ -8,6 +8,7 @@ import InterviewSummary from '../components/InterviewSummary.jsx';
 import SessionsList from '../components/SessionsList.jsx';
 import Navigation from '../components/Navigation.jsx';
 import Login from '../components/Login.jsx';
+import LandingPage from '../components/LandingPage.jsx';
 
 function PrivateRoute({ token, children }) {
     return token ? children : <Navigate to="/login" replace />;
@@ -262,18 +263,23 @@ function App() {
         showToast('Logged out successfully', 'success');
     };
 
-    return (
-        <div className="App">
-            <Navigation 
-                onNewSession={handleNewSession} 
-                currentStep={currentStep} 
-                user={user} 
-                onLogout={handleLogout} 
-                showGuide={showGuide}
-                onToggleGuide={toggleGuide}
-            />
+    const isAuthPage = location.pathname === '/login' || location.pathname === '/signup';
+    const isFullBleedPage = isAuthPage || (!user && location.pathname === '/');
 
-            <main className="app-main">
+    return (
+        <div className={`App ${isFullBleedPage ? 'auth-page' : ''}`}>
+            {user && !isAuthPage && (
+                <Navigation 
+                    onNewSession={handleNewSession} 
+                    currentStep={currentStep} 
+                    user={user} 
+                    onLogout={handleLogout} 
+                    showGuide={showGuide}
+                    onToggleGuide={toggleGuide}
+                />
+            )}
+
+            <main className={`app-main ${isFullBleedPage ? 'auth-main' : ''}`}>
                 {toast && (
                     <div className={`toast toast-${toast.type}`}>
                         <span>{toast.type === 'success' ? '✓' : '✗'} {toast.message}</span>
@@ -402,6 +408,10 @@ function App() {
                 ) : (
                     <Routes>
                         <Route 
+                            path="/" 
+                            element={<LandingPage />} 
+                        />
+                        <Route 
                             path="/login" 
                             element={
                                 token ? <Navigate to="/" replace /> : 
@@ -415,7 +425,7 @@ function App() {
                                 <Login setToken={setToken} setUser={setUser} showToast={showToast} initialMode="signup" />
                             } 
                         />
-                        <Route path="*" element={<Navigate to="/login" replace />} />
+                        <Route path="*" element={<Navigate to="/" replace />} />
                     </Routes>
                 )}
             </main>

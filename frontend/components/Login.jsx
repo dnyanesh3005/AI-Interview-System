@@ -8,6 +8,7 @@ function Login({ setToken, setUser, showToast, initialMode = 'login' }) {
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
     const [confirmPassword, setConfirmPassword] = useState('');
+    const [companyName, setCompanyName] = useState('');
     const [loading, setLoading] = useState(false);
 
     const navigate = useNavigate();
@@ -18,7 +19,7 @@ function Login({ setToken, setUser, showToast, initialMode = 'login' }) {
         
         // Basic Validations
         if (username.trim().length < 3) {
-            showToast('Username must be at least 3 characters long', 'error');
+            showToast(mode === 'signup' ? 'Full Name must be at least 3 characters long' : 'Username must be at least 3 characters long', 'error');
             return;
         }
         if (password.length < 6) {
@@ -53,6 +54,7 @@ function Login({ setToken, setUser, showToast, initialMode = 'login' }) {
                 setMode('login');
                 setPassword('');
                 setConfirmPassword('');
+                setCompanyName('');
             } catch (err) {
                 showToast(err.message, 'error');
             } finally {
@@ -98,13 +100,13 @@ function Login({ setToken, setUser, showToast, initialMode = 'login' }) {
                 
                 <form onSubmit={handleSubmit} className="login-form">
                     <div className="input-group">
-                        <label htmlFor="username">Username</label>
+                        <label htmlFor="username">{mode === 'signup' ? 'Full Name' : 'Email Address or Username'}</label>
                         <input
                             type="text"
                             id="username"
                             value={username}
                             onChange={(e) => setUsername(e.target.value)}
-                            placeholder="Enter username"
+                            placeholder={mode === 'signup' ? "First and Last Name" : "Enter email or username"}
                             required
                             disabled={loading}
                         />
@@ -153,14 +155,66 @@ function Login({ setToken, setUser, showToast, initialMode = 'login' }) {
                         </div>
                     )}
 
+                    {mode === 'signup' && (
+                        <div className="input-group">
+                            <label htmlFor="companyName">Company Name</label>
+                            <input
+                                type="text"
+                                id="companyName"
+                                value={companyName}
+                                onChange={(e) => setCompanyName(e.target.value)}
+                                placeholder="Acme Corporation"
+                                disabled={loading}
+                            />
+                        </div>
+                    )}
+
+                    {mode === 'login' && (
+                        <div className="forgot-password-container">
+                            <button
+                                type="button"
+                                className="forgot-password-link"
+                                onClick={() => showToast('Password reset is not configured. Please contact the administrator.', 'error')}
+                            >
+                                Forgot Password?
+                            </button>
+                        </div>
+                    )}
+
                     <button type="submit" className="login-btn" disabled={loading}>
                         {loading ? (
                             <span className="spinner-small"></span>
                         ) : (
-                            mode === 'login' ? 'Sign In' : 'Register'
+                            mode === 'login' ? 'Sign In' : 'Sign Up'
                         )}
                     </button>
                 </form>
+
+                {mode === 'login' && (
+                    <div className="social-login-container">
+                        <div className="divider">
+                            <span>or</span>
+                        </div>
+                        <div className="social-buttons">
+                            <button
+                                type="button"
+                                className="social-btn google-btn"
+                                onClick={() => showToast('Google authentication placeholder', 'success')}
+                            >
+                                <span className="social-icon">🌐</span>
+                                Sign in with Google
+                            </button>
+                            <button
+                                type="button"
+                                className="social-btn linkedin-btn"
+                                onClick={() => showToast('LinkedIn authentication placeholder', 'success')}
+                            >
+                                <span className="social-icon">🔗</span>
+                                Sign in with LinkedIn
+                            </button>
+                        </div>
+                    </div>
+                )}
 
                 <div className="login-footer">
                     {mode === 'login' ? (
