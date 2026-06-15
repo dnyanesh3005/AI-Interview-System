@@ -52,6 +52,19 @@ class Database:
                     pass
                 self.conn.commit()
                 logger.info("Migration completed")
+
+            # Migration: Add google_id column for OAuth users (if not exists)
+            cursor.execute("PRAGMA table_info(users)")
+            columns = [col[1] for col in cursor.fetchall()]
+            if "google_id" not in columns:
+                logger.info("Migrating users table: adding google_id column...")
+                cursor.execute("ALTER TABLE users ADD COLUMN google_id TEXT")
+                try:
+                    cursor.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_google_id ON users(google_id) WHERE google_id IS NOT NULL")
+                except Exception:
+                    pass
+                self.conn.commit()
+                logger.info("google_id column migration completed")
             
             # Sessions table
             cursor.execute('''
@@ -122,7 +135,7 @@ class Database:
                     FOREIGN KEY (session_id) REFERENCES sessions(id)
                 )
             ''')
-            # Migration for answers table (add video_path if not exists)
+            # Migration for answers table
             cursor.execute("PRAGMA table_info(answers)")
             columns = [col[1] for col in cursor.fetchall()]
             if "video_path" not in columns:
@@ -133,6 +146,11 @@ class Database:
                 logger.info("Migrating answers table: adding duration_seconds column...")
                 cursor.execute("ALTER TABLE answers ADD COLUMN duration_seconds INTEGER")
                 self.conn.commit()
+            if "transcript_source" not in columns:
+                logger.info("Migrating answers table: adding transcript_source column...")
+                cursor.execute("ALTER TABLE answers ADD COLUMN transcript_source TEXT DEFAULT 'browser_stt'")
+                self.conn.commit()
+                logger.info("transcript_source column migration completed")
             
             self.conn.commit()
             logger.info("Database initialized successfully")
@@ -312,27 +330,44 @@ class Database:
             logger.error(f"Error storing question: {str(e)}")
             raise
     
-    def store_answer(self, session_id: str, question_id: str, answer: str, duration_seconds: int = 0, video_path: Optional[str] = None) -> str:
-        """Store candidate answer"""
+    def store_answer(
+        self,
+        session_id: str,
+        question_id: str,
+        answer: str,
+        duration_seconds: int = 0,
+        video_path: Optional[str] = None,
+        transcript_source: str = "browser_stt",
+    ) -> str:
+        """Store candidate answer with transcript provenance.
+
+        Args:
+            transcript_source: Which STT provider generated the text.
+                Values: 'gemini_multimodal' | 'openai_whisper' |
+                        'browser_stt' | 'manual_text' | 'empty'
+        """
         try:
             cursor = self.conn.cursor()
             answer_id = f"{question_id}_ans"
-            
-            # Use UPSERT style checking to handle potential client retries
+
+            # UPSERT — handle client retries gracefully
             cursor.execute('SELECT id FROM answers WHERE id = ?', (answer_id,))
             exists = cursor.fetchone()
-            
+
             if exists:
                 cursor.execute('''
-                    UPDATE answers 
-                    SET answer_text = ?, duration_seconds = ?, video_path = ?, created_at = ?
+                    UPDATE answers
+                    SET answer_text = ?, duration_seconds = ?, video_path = ?,
+                        transcript_source = ?, created_at = ?
                     WHERE id = ?
-                ''', (answer, duration_seconds, video_path, datetime.now(), answer_id))
+                ''', (answer, duration_seconds, video_path,
+                      transcript_source, datetime.now(), answer_id))
             else:
                 cursor.execute('''
-                    INSERT INTO answers 
-                    (id, session_id, question_id, answer_text, duration_seconds, video_path, created_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    INSERT INTO answers
+                    (id, session_id, question_id, answer_text, duration_seconds,
+                     video_path, transcript_source, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 ''', (
                     answer_id,
                     session_id,
@@ -340,57 +375,65 @@ class Database:
                     answer,
                     duration_seconds,
                     video_path,
-                    datetime.now()
+                    transcript_source,
+                    datetime.now(),
                 ))
-            
-            # Update session updated_at
+
+            # Keep session updated_at fresh
             cursor.execute(
                 'UPDATE sessions SET updated_at = ? WHERE id = ?',
-                (datetime.now(), session_id)
+                (datetime.now(), session_id),
             )
-            
+
             self.conn.commit()
-            logger.info(f"Answer stored/updated for question: {question_id}")
+            logger.info(
+                f"Answer stored for question {question_id} "
+                f"[source={transcript_source}]"
+            )
             return answer_id
-            
+
         except Exception as e:
             logger.error(f"Error storing answer: {str(e)}")
             raise
     
     def get_qa_pairs(self, session_id: str) -> List[Dict]:
-        """Get all Q&A pairs for a session"""
+        """Get all Q&A pairs for a session, including transcript provenance."""
         try:
             cursor = self.conn.cursor()
-            
+
             cursor.execute('''
-                SELECT 
+                SELECT
                     q.question_number,
                     q.question_text,
                     q.question_type,
                     q.difficulty,
                     q.category,
                     a.answer_text,
-                    a.created_at
+                    a.created_at,
+                    a.transcript_source,
+                    a.video_path
                 FROM questions q
                 LEFT JOIN answers a ON q.id = a.question_id
                 WHERE q.session_id = ?
                 ORDER BY q.question_number
             ''', (session_id,))
-            
+
             pairs = []
             for row in cursor.fetchall():
                 pairs.append({
-                    "question_number": row[0],
-                    "question": row[1],
-                    "question_type": row[2],
-                    "difficulty": row[3],
-                    "category": row[4],
-                    "answer": row[5],
-                    "answered_at": row[6]
+                    "question_number":  row[0],
+                    "question":         row[1],
+                    "question_type":    row[2],
+                    "difficulty":       row[3],
+                    "category":         row[4],
+                    "answer":           row[5],
+                    "answered_at":      row[6],
+                    "transcript_source": row[7] or "browser_stt",
+                    "video_path":       row[8],
                 })
-            
+
             return pairs
-            
+
         except Exception as e:
             logger.error(f"Error retrieving Q&A pairs: {str(e)}")
             return []
@@ -512,6 +555,51 @@ class Database:
             logger.error(f"Error completing session: {str(e)}")
             return False
     
+    def get_user_by_google_id(self, google_id: str) -> Optional[Dict]:
+        """Get user by Google OAuth sub (google_id)"""
+        try:
+            cursor = self.conn.cursor()
+            cursor.execute(
+                'SELECT id, username, email, password_hash, google_id FROM users WHERE google_id = ?',
+                (google_id,)
+            )
+            row = cursor.fetchone()
+            if row:
+                return {"id": row[0], "username": row[1], "email": row[2],
+                        "password_hash": row[3], "google_id": row[4]}
+            return None
+        except Exception as e:
+            logger.error(f"Error getting user by google_id: {str(e)}")
+            return None
+
+    def create_oauth_user(self, user_id: str, username: str, email: str, google_id: str) -> bool:
+        """Create a new user authenticated via Google OAuth (no password)"""
+        try:
+            cursor = self.conn.cursor()
+            cursor.execute(
+                'INSERT INTO users (id, username, email, password_hash, google_id, created_at) VALUES (?, ?, ?, ?, ?, ?)',
+                (user_id, username, email, None, google_id, datetime.now())
+            )
+            self.conn.commit()
+            return True
+        except Exception as e:
+            logger.error(f"Error creating OAuth user: {str(e)}")
+            return False
+
+    def update_user_google_id(self, user_id: str, google_id: str) -> bool:
+        """Link an existing email-based account to a Google ID"""
+        try:
+            cursor = self.conn.cursor()
+            cursor.execute(
+                'UPDATE users SET google_id = ? WHERE id = ?',
+                (google_id, user_id)
+            )
+            self.conn.commit()
+            return True
+        except Exception as e:
+            logger.error(f"Error updating google_id for user {user_id}: {str(e)}")
+            return False
+
     def close(self):
         """Close database connection"""
         if self.conn:

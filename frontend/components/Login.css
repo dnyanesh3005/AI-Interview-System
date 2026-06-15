@@ -193,6 +193,31 @@
     font-size: 1.1rem;
 }
 
+.social-btn-disabled,
+.social-btn-disabled:hover {
+    opacity: 0.45;
+    cursor: not-allowed;
+    transform: none;
+    box-shadow: none;
+    background: #f1f5f9;
+    border-color: #e2e8f0;
+    color: #94a3b8;
+}
+
+.google-login-wrapper {
+    width: 100%;
+    display: flex;
+    justify-content: center;
+}
+
+.google-login-wrapper > div {
+    width: 100% !important;
+}
+
+.google-login-wrapper iframe {
+    width: 100% !important;
+}
+
 .login-footer {
     margin-top: 1.5rem;
     text-align: center;

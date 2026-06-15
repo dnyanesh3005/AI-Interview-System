@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
+import { GoogleLogin } from '@react-oauth/google';
 import './Login.css';
 
 function Login({ setToken, setUser, showToast, initialMode = 'login' }) {
@@ -10,6 +11,7 @@ function Login({ setToken, setUser, showToast, initialMode = 'login' }) {
     const [confirmPassword, setConfirmPassword] = useState('');
     const [companyName, setCompanyName] = useState('');
     const [loading, setLoading] = useState(false);
+    const [googleLoading, setGoogleLoading] = useState(false);
 
     const navigate = useNavigate();
     const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000/api';
@@ -87,6 +89,30 @@ function Login({ setToken, setUser, showToast, initialMode = 'login' }) {
             } finally {
                 setLoading(false);
             }
+        }
+    };
+
+    const handleGoogleSuccess = async (credentialResponse) => {
+        setGoogleLoading(true);
+        try {
+            const res = await fetch(`${API_BASE_URL}/auth/google`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ credential: credentialResponse.credential }),
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.detail || 'Google sign-in failed');
+
+            localStorage.setItem('token', data.token);
+            localStorage.setItem('user', JSON.stringify(data.user));
+            setToken(data.token);
+            setUser(data.user);
+            showToast(`Welcome, ${data.user.username}!`, 'success');
+            navigate('/');
+        } catch (err) {
+            showToast(err.message, 'error');
+        } finally {
+            setGoogleLoading(false);
         }
     };
 
@@ -196,25 +222,31 @@ function Login({ setToken, setUser, showToast, initialMode = 'login' }) {
                             <span>or</span>
                         </div>
                         <div className="social-buttons">
+                            <div className="google-login-wrapper">
+                                <GoogleLogin
+                                    onSuccess={handleGoogleSuccess}
+                                    onError={() => showToast('Google sign-in was cancelled or failed', 'error')}
+                                    useOneTap={false}
+                                    theme="outline"
+                                    size="large"
+                                    width="100%"
+                                    text="signin_with"
+                                    shape="rectangular"
+                                />
+                            </div>
                             <button
                                 type="button"
-                                className="social-btn google-btn"
-                                onClick={() => showToast('Google authentication placeholder', 'success')}
-                            >
-                                <span className="social-icon">🌐</span>
-                                Sign in with Google
-                            </button>
-                            <button
-                                type="button"
-                                className="social-btn linkedin-btn"
-                                onClick={() => showToast('LinkedIn authentication placeholder', 'success')}
+                                className="social-btn linkedin-btn social-btn-disabled"
+                                disabled
+                                title="LinkedIn OAuth coming soon"
                             >
                                 <span className="social-icon">🔗</span>
-                                Sign in with LinkedIn
+                                LinkedIn — Coming Soon
                             </button>
                         </div>
                     </div>
                 )}
+
 
                 <div className="login-footer">
                     {mode === 'login' ? (

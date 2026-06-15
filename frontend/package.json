@@ -13,7 +13,8 @@
         "react": "^18.2.0",
         "react-dom": "^18.2.0",
         "react-router-dom": "^6.17.0",
-        "axios": "^1.6.0"
+        "axios": "^1.6.0",
+        "@react-oauth/google": "^0.12.1"
     },
     "devDependencies": {
         "@types/react": "^18.2.37",
@@ -24,10 +25,7 @@
         "eslint-plugin-react": "^7.33.2",
         "eslint-plugin-react-hooks": "^4.6.0"
     },
-    "optionalDependencies": {
-        "@rollup/rollup-linux-x64-gnu": "*"
-    },
     "engines": {
-        "node": ">=16.0.0"
+        "node": ">=20.0.0"
     }
-}
+}
