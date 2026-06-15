@@ -620,6 +620,45 @@
     font-size: 0.95rem;
 }
 
+.submitting-sub {
+    color: #6366f1;
+    font-size: 0.82rem;
+    margin-top: 0.4rem;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+}
+
+/* ── Transcript status bar ─────────────────────────────────────────────────── */
+.transcript-status {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.75rem 1.1rem;
+    border-radius: 0.65rem;
+    font-size: 0.88rem;
+    font-weight: 600;
+    margin-top: 0.5rem;
+    animation: fadeIn 0.3s ease-out;
+}
+
+.transcript-status.transcribing {
+    background: rgba(99, 102, 241, 0.1);
+    border: 1px solid rgba(99, 102, 241, 0.25);
+    color: #a5b4fc;
+}
+
+/* Inline spinner (small, for inside text rows) */
+.spinner-inline {
+    display: inline-block;
+    width: 14px;
+    height: 14px;
+    border: 2px solid rgba(165, 180, 252, 0.2);
+    border-top-color: #a5b4fc;
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+    flex-shrink: 0;
+}
+
 /* Error notification bar and retry */
 .error-notification-bar {
     display: flex;

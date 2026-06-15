@@ -30,6 +30,7 @@ from modules.llm_service import LLMService
 from modules.database import Database
 from modules.session_manager import SessionManager
 from modules.evaluation import CandidateEvaluator
+from modules.transcription import Transcriber
 
 # ─── Logging ───────────────────────────────────────────────────────────────────
 logging.basicConfig(level=logging.INFO)
@@ -79,9 +80,12 @@ rag_pipeline    = RAGPipeline()
 llm_service     = LLMService()
 question_generator = QuestionGenerator(rag_pipeline, llm_service)
 evaluator       = CandidateEvaluator()
+transcriber     = Transcriber()
 
 # ─── JWT ───────────────────────────────────────────────────────────────────────
 import jwt
+from google.oauth2 import id_token as google_id_token
+from google.auth.transport import requests as google_requests
 
 JWT_SECRET    = os.getenv("JWT_SECRET", "super-secret-key-change-in-production")
 JWT_ALGORITHM = "HS256"
@@ -149,6 +153,10 @@ class RegisterRequest(BaseModel):
 class LoginRequest(BaseModel):
     username: str
     password: str
+
+
+class GoogleAuthRequest(BaseModel):
+    credential: str  # Google ID token returned by @react-oauth/google
 
 
 class RoleSelection(BaseModel):
@@ -222,6 +230,71 @@ async def login(req: LoginRequest):
         "username": user["username"],
         "email":    user["email"],
     })
+    return {
+        "success": True,
+        "token":   token,
+        "user": {
+            "user_id":  user["id"],
+            "username": user["username"],
+            "email":    user["email"],
+        },
+    }
+
+
+@app.post("/api/auth/google")
+async def google_auth(req: GoogleAuthRequest):
+    """
+    Verify a Google ID token from @react-oauth/google.
+    Upsert the user (by google_id → by email → create new) and return an app JWT.
+    """
+    GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "")
+    if not GOOGLE_CLIENT_ID or GOOGLE_CLIENT_ID == "YOUR_GOOGLE_CLIENT_ID_HERE.apps.googleusercontent.com":
+        raise HTTPException(500, "Google OAuth is not configured. Set GOOGLE_CLIENT_ID in backend .env")
+
+    try:
+        id_info = google_id_token.verify_oauth2_token(
+            req.credential,
+            google_requests.Request(),
+            GOOGLE_CLIENT_ID,
+        )
+    except ValueError as e:
+        logger.warning(f"Google token verification failed: {e}")
+        raise HTTPException(401, f"Invalid Google token: {e}")
+
+    google_id = id_info["sub"]
+    email     = id_info.get("email", "")
+    name      = id_info.get("name") or id_info.get("given_name") or email.split("@")[0]
+
+    # 1. Check by google_id first (returning OAuth user)
+    user = db.get_user_by_google_id(google_id)
+
+    if not user:
+        # 2. Check by email (existing password-based account → link it)
+        existing = db.get_user_by_email(email)
+        if existing:
+            db.update_user_google_id(existing["id"], google_id)
+            user = existing
+        else:
+            # 3. Brand-new user — create OAuth account
+            user_id = str(uuid.uuid4())
+            # Ensure username uniqueness if Google name clashes
+            base_username = re.sub(r"[^a-zA-Z0-9_]", "", name.replace(" ", "_")) or "user"
+            username = base_username
+            suffix = 1
+            while db.get_user_by_username(username):
+                username = f"{base_username}_{suffix}"
+                suffix += 1
+            success = db.create_oauth_user(user_id, username, email, google_id)
+            if not success:
+                raise HTTPException(500, "Could not create user account")
+            user = {"id": user_id, "username": username, "email": email}
+
+    token = create_access_token({
+        "id":       user["id"],
+        "username": user["username"],
+        "email":    user["email"],
+    })
+    logger.info(f"Google OAuth login: {email}")
     return {
         "success": True,
         "token":   token,
@@ -521,9 +594,15 @@ async def submit_answer(
     video:            Optional[UploadFile] = File(None),
     current_user:     dict                = Depends(get_current_user),
 ):
-    """Submit a candidate answer and receive the next question."""
+    """Submit a candidate answer and receive the next question.
+
+    Transcript priority:
+      1. Gemini multimodal (server-side) — most accurate
+      2. OpenAI Whisper API (server-side) — robust fallback
+      3. Browser Web Speech API draft (client-side) — last resort
+    """
     try:
-        if not answer.strip():
+        if not answer.strip() and not video:
             raise HTTPException(400, "Answer cannot be empty")
 
         session = session_manager.get_session(session_id)
@@ -532,60 +611,93 @@ async def submit_answer(
         if session.get("user_id") != current_user["id"]:
             raise HTTPException(403, "Unauthorized")
 
-        # Save video if provided
-        video_path = None
+        # ── Save video file ─────────────────────────────────────────────────
+        video_path  = None
+        video_bytes = b""
+
         if video:
             try:
                 os.makedirs("recordings", exist_ok=True)
-                video_path = f"recordings/{session_id}_{question_id}.webm"
+                video_bytes = await video.read()
+                video_path  = f"recordings/{session_id}_{question_id}.webm"
                 with open(video_path, "wb") as f:
-                    f.write(await video.read())
-                logger.info(f"Video saved: {video_path}")
+                    f.write(video_bytes)
+                logger.info(
+                    f"Video saved: {video_path} "
+                    f"({len(video_bytes) // 1024} KB)"
+                )
             except Exception as ve:
                 logger.error(f"Video save failed: {ve}")
+                video_bytes = b""
 
+        # ── Server-side transcription ───────────────────────────────────────
+        # transcriber.transcribe() returns (text, source_label)
+        # source_label: 'gemini_multimodal' | 'openai_whisper' | 'browser_stt' | 'empty'
+        final_answer, transcript_source = transcriber.transcribe(
+            video_bytes=video_bytes,
+            fallback_text=answer.strip(),
+        )
+
+        # Guard: ensure we always have something stored
+        if not final_answer:
+            final_answer = answer.strip() or "[No response]"
+
+        logger.info(
+            f"Transcript for {question_id}: source={transcript_source}, "
+            f"length={len(final_answer)} chars"
+        )
+
+        # ── Persist answer ─────────────────────────────────────────────────
         db.store_answer(
             session_id=session_id,
             question_id=question_id,
-            answer=answer,
+            answer=final_answer,
             duration_seconds=duration_seconds,
             video_path=video_path,
+            transcript_source=transcript_source,
         )
 
-        answer_count  = db.get_answer_count(session_id)
+        answer_count    = db.get_answer_count(session_id)
         total_questions = _safe_total_questions(session)
 
         if answer_count >= total_questions:
             db.complete_session(session_id)
             if session_id in session_manager.active_sessions:
                 session_manager.active_sessions[session_id]["status"] = "completed"
-            return {"success": True, "interview_complete": True, "message": "Interview completed!"}
+            return {
+                "success": True,
+                "interview_complete": True,
+                "message": "Interview completed!",
+                "transcript_source": transcript_source,
+            }
 
-        # Generate next question
-        resume_data = session["resume_data"]
+        # ── Generate next question ─────────────────────────────────────────
+        resume_data   = session["resume_data"]
         next_question = question_generator.generate_question(
             session_id=session_id,
             resume_data=resume_data,
             question_number=answer_count + 1,
             previous_context={
                 "previous_question": db.get_last_question(session_id),
-                "previous_answer":   answer,
+                "previous_answer":   final_answer,
             },
         )
         db.store_question(session_id, next_question)
 
         return {
-            "success":           True,
+            "success":            True,
             "interview_complete": False,
-            "question":          next_question,
-            "question_number":   answer_count + 1,
-            "total_questions":   total_questions,
+            "question":           next_question,
+            "question_number":    answer_count + 1,
+            "total_questions":    total_questions,
+            "transcript_source":  transcript_source,
         }
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"Submit answer error: {e}")
         raise HTTPException(500, str(e))
+
 
 
 # ─── Skip Question ─────────────────────────────────────────────────────────────

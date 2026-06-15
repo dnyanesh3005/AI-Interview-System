@@ -13,6 +13,7 @@ function InterviewFlow({ sessionId, resumeData, role, initialQuestion, totalQues
     const [answeredQuestions, setAnsweredQuestions] = useState([]);
     const [answerStartTime, setAnswerStartTime] = useState(null);
     const [recordingDuration, setRecordingDuration] = useState(0);
+    const [transcriptStatus, setTranscriptStatus] = useState('idle'); // 'idle'|'transcribing'|'done'|'fallback'
 
     // Video/Audio Recording States
     const [isRecording, setIsRecording] = useState(false);
@@ -268,6 +269,7 @@ function InterviewFlow({ sessionId, resumeData, role, initialQuestion, totalQues
         }
 
         setIsAnswering(true);
+        setTranscriptStatus('transcribing');
         setError(null);
 
         try {
@@ -276,16 +278,17 @@ function InterviewFlow({ sessionId, resumeData, role, initialQuestion, totalQues
             const formData = new FormData();
             formData.append('session_id', sessionId);
             formData.append('question_id', currentQuestion.question_id);
-            formData.append('answer', answer.trim() || '[Video response recorded]');
+            // Send browser draft as hint; backend transcription overrides this
+            formData.append('answer', answer.trim());
             formData.append('duration_seconds', String(duration));
-            
+
             if (videoBlob) {
                 formData.append('video', videoBlob, `response_${sessionId}_${currentQuestion.question_id}.webm`);
             }
 
             const response = await fetch(`${API_BASE_URL}/submit-answer`, {
                 method: 'POST',
-                headers: { 
+                headers: {
                     'Authorization': `Bearer ${token}`
                 },
                 body: formData,
@@ -298,6 +301,20 @@ function InterviewFlow({ sessionId, resumeData, role, initialQuestion, totalQues
 
             const data = await response.json();
 
+            // Show which STT provider was used
+            const srcLabel = {
+                'gemini_multimodal': '✨ Gemini AI',
+                'openai_whisper':    '🎙 Whisper API',
+                'browser_stt':       '🌐 Browser STT',
+                'manual_text':       '⌨️ Typed',
+                'empty':             '⚠️ No transcript',
+            }[data.transcript_source] || '🌐 Browser STT';
+
+            setTranscriptStatus(data.transcript_source === 'empty' ? 'fallback' : 'done');
+            if (showToast) {
+                showToast(`Transcript captured via ${srcLabel}`, 'success');
+            }
+
             // Store answered question
             setAnsweredQuestions(prev => [
                 ...prev,
@@ -305,14 +322,13 @@ function InterviewFlow({ sessionId, resumeData, role, initialQuestion, totalQues
                     question: currentQuestion.question_text,
                     answer: answer.trim() || '[Video Response]',
                     questionNumber: questionNumber,
+                    transcriptSource: data.transcript_source,
                 }
             ]);
 
-            // Check if interview is complete
             if (data.interview_complete) {
                 onComplete(sessionId);
             } else {
-                // Move to next question
                 setCurrentQuestion(data.question);
                 setQuestionNumber(prev => prev + 1);
                 if (data.total_questions) setTotalQuestions(data.total_questions);
@@ -320,8 +336,10 @@ function InterviewFlow({ sessionId, resumeData, role, initialQuestion, totalQues
                 setAnswerStartTime(null);
                 setRecordingDuration(0);
                 setVideoBlob(null);
+                setTranscriptStatus('idle');
             }
         } catch (err) {
+            setTranscriptStatus('idle');
             setError(err.message);
         } finally {
             setIsAnswering(false);
@@ -476,8 +494,15 @@ function InterviewFlow({ sessionId, resumeData, role, initialQuestion, totalQues
 
                         {answer && (
                             <div className="transcript-preview">
-                                <p className="transcript-label">📝 Transcription:</p>
+                                <p className="transcript-label">📝 Live Transcription (browser preview):</p>
                                 <p className="transcript-text">{answer}</p>
+                            </div>
+                        )}
+
+                        {transcriptStatus === 'transcribing' && (
+                            <div className="transcript-status transcribing">
+                                <span className="spinner-inline" />
+                                <span>Transcribing video with AI — this takes a few seconds…</span>
                             </div>
                         )}
 
@@ -496,7 +521,7 @@ function InterviewFlow({ sessionId, resumeData, role, initialQuestion, totalQues
                                 onClick={handleAnswerSubmit}
                                 disabled={isAnswering || isSkipping || isRecording || !videoBlob || !currentQuestion}
                             >
-                                {isAnswering ? 'Uploading Response...' : 'Submit Answer'}
+                                {isAnswering ? '🔄 Transcribing & Uploading…' : 'Submit Answer'}
                             </button>
                         </div>
                     </div>
@@ -523,8 +548,9 @@ function InterviewFlow({ sessionId, resumeData, role, initialQuestion, totalQues
                 <div className="submitting-overlay">
                     <div className="submitting-card">
                         <div className="submitting-spinner"></div>
-                        <h3>Uploading Response</h3>
-                        <p>Uploading and analyzing transcript...</p>
+                        <h3>Processing Response</h3>
+                        <p>Uploading video and running AI transcription…</p>
+                        <p className="submitting-sub">Gemini is extracting your spoken answer</p>
                     </div>
                 </div>
             )}
